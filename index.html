@@ -79,7 +79,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v6 · data from ESPN · lines from DraftKings</div>
+<div class="sub">Over/under model · v7 · data from ESPN · lines from DraftKings</div>
 </header>
 <main>
 <div class="row">
@@ -269,7 +269,7 @@ function agg(games,c){
 
 function stats(S,O,n,mins,gposs,myPoss,ptime,ptPoss,c){
  const d=(a,b)=>b?a/b:null,scale=n;
- return{n,mins,
+ return{n,mins,myPoss,
   pts:S.pts/scale,fga:S.fga/scale,tpa:S.tpa/scale,fta:S.fta/scale,orb:S.orb/scale,tov:S.tov/scale,
   fg:d(S.fgm,S.fga),tp:d(S.tpm,S.tpa),ft:d(S.ftm,S.fta),
   poss:gposs/scale,pace:d(gposs,mins)*c.total,ppp:d(S.pts,myPoss),
@@ -624,29 +624,39 @@ function projBlock(G,P,c){
  return html;
 }
 
+function tripSplit(t,poss,h,c){
+ const r=h.raw,pn=h.myPoss;
+ const p2=(r.fga-r.tpa)?(r.fgm-r.tpm)/(r.fga-r.tpa):0,p3=r.tpa?r.tpm/r.tpa:0,pft=r.fta?r.ftm/r.fta:0;
+ const v2=2*p2,v3=3*p3,vF=pft;
+ const tn=r.tov/pn,on=r.orb/pn,fn=r.fta/pn,s3n=r.fga?r.tpa/r.fga:0;
+ const vSn=s3n*v3+(1-s3n)*v2;
+ const tl=t.tov/poss,ol=t.orb/poss,fl=t.fta/poss,s3l=t.fga?t.tpa/t.fga:0,FGAl=t.fga/poss;
+ const tov=-(tl-tn)*vSn*poss;
+ const orb=(ol-on)*vSn*poss;
+ const ft=(fl-fn)*(vF-c.ftc*vSn)*poss;
+ const mix=FGAl*(s3l-s3n)*(v3-v2)*poss;
+ const l2=((t.fgm-t.tpm)-(t.fga-t.tpa)*p2)*2,l3=(t.tpm-t.tpa*p3)*3,lft=t.ftm-t.fta*pft;
+ return{tov,orb,ft,mix,l2,l3,lft,luck:l2+l3+lft,
+  tovN:tn*poss,orbN:on*poss,ftaN:fn*poss,s3n,s3l,ppp:h.ppp};
+}
+
 function breakdown(G,P,c){
  const live=G.live,[a,b]=live.order;
- if(!P.L||live.state==='pre'||P.el<=0||!P.hA||!P.hB||!P.expPace)return null;
- const expPossSoFar=P.expPace*P.f;
- const possSoFar=(P.lA.pm+P.lB.pm)/2;
- const ptsPerPoss=P.L/P.expPace;
+ if(!P.L||live.state==='pre'||P.el<=0||!P.hA||!P.hB||!P.expPace||!P.hA.myPoss||!P.hB.myPoss)return null;
  const vegasSoFar=P.L-P.vegasRem;
  const D=P.pts-vegasSoFar;
- const pace=(possSoFar-expPossSoFar)*ptsPerPoss;
- const luckTeam=id=>{
-  const t=live.teams[id],h=G.hist[id]&&G.hist[id].l10;if(!h||!h.raw)return{l3:0,l2:0,lft:0,tot:0};
-  const r=h.raw,p3=r.tpa?r.tpm/r.tpa:0,a2=r.fga-r.tpa,p2=a2?(r.fgm-r.tpm)/a2:0,pft=r.fta?r.ftm/r.fta:0;
-  const mv=h.orbp!=null?h.orbp:0.3;
-  const l3=(t.tpm-t.tpa*p3)*(3-mv),l2=((t.fgm-t.tpm)-(t.fga-t.tpa)*p2)*(2-mv),lft=t.ftm-t.fta*pft;
-  return{l3,l2,lft,tot:l3+l2+lft,p3,p2,pft};
- };
- const LA=luckTeam(a),LB=luckTeam(b);
- const luck=LA.tot+LB.tot;
- const hA=P.hA,hB=P.hB,vegasPPP=P.L/(2*P.expPace);
- const base=(P.lA.pm*hA.ppp+P.lB.pm*hB.ppp)-(P.lA.pm+P.lB.pm)*vegasPPP;
- const other=D-pace-luck-base;
- const carry=P.modelRem-P.vegasRem;
- return{vegasSoFar,D,pace,luck,LA,LB,base,other,carry,expPossSoFar,possSoFar,vegasPPP};
+ const share=vegasSoFar/P.L;
+ const expPoss=P.expPace*share;
+ const A=live.teams[a],B=live.teams[b];
+ const pA=P.lA.pm,pB=P.lB.pm;
+ const pace=(pA-expPoss)*P.hA.ppp+(pB-expPoss)*P.hB.ppp;
+ const base=expPoss*(P.hA.ppp+P.hB.ppp)-vegasSoFar;
+ const TA=tripSplit(A,pA,P.hA,c),TB=tripSplit(B,pB,P.hB,c);
+ const sum=k=>TA[k]+TB[k];
+ const out={vegasSoFar,D,expPoss,possSoFar:(pA+pB)/2,pace,base,TA,TB,
+  tov:sum('tov'),ft:sum('ft'),mix:sum('mix'),orb:sum('orb'),luck:sum('luck')};
+ out.check=D-(pace+base+out.tov+out.ft+out.mix+out.orb+out.luck);
+ return out;
 }
 
 function sidePanel(G,P,c){
@@ -654,7 +664,7 @@ function sidePanel(G,P,c){
  let h='<div class="side"><h3>Why the model says '+(P.L&&live.state!=='pre'&&P.el>0?f1(P.proj):'–')+'</h3>';
  const B=breakdown(G,P,c);
  if(!B){return h+'<p class="note">'+(!P.L?'Needs the pregame total.':live.state==='pre'?'Appears once the game starts.':'Waiting for both teams\' history to load.')+'</p></div>'}
- const vals=[B.pace,B.luck,B.base,B.other,P.carryPace,P.carryEnd];
+ const vals=[B.pace,B.tov,B.ft,B.mix,B.orb,B.luck,B.base,P.carryPace,P.carryEnd];
  const mx=Math.max(4,...vals.map(Math.abs));
  const bar=v=>{const w=Math.min(50,Math.abs(v)/mx*50);return'<div class="bar"><i style="'+(v>=0?'left:50%':'right:50%')+';width:'+w+'%;background:'+(v>=0?'#2e7d32':'#b42318')+'"></i></div>'};
  const row=(lab,sub,v,cls)=>'<div class="bk '+(cls||'')+'"><div class="lab">'+lab+(sub?'<small>'+sub+'</small>':'')+'</div>'+(v==null?'<div></div><div class="val">–</div>':bar(v)+'<div class="val" style="color:'+(v>=0?'#2e7d32':'#b42318')+'">'+sgn(v)+'</div>')+'</div>';
@@ -662,11 +672,18 @@ function sidePanel(G,P,c){
  h+=plain('Vegas pregame total','DraftKings close / your entry',f1(P.L),'');
  h+='<div class="sec">So far · '+f1(P.el)+' of '+c.total+' min</div>';
  h+=plain('Points so far vs Vegas pace',P.pts+' scored vs '+f1(B.vegasSoFar)+' expected by now',sgn(B.D),'sub');
- h+=row('Pace',f1(B.possSoFar)+' possessions vs '+f1(B.expPossSoFar)+' normal by now',B.pace);
- const lt=(n,L)=>n+': 3s '+sgn(L.l3)+', 2s '+sgn(L.l2)+', FT '+sgn(L.lft);
- h+=row('Shooting luck',lt(nA,B.LA)+'<br>'+lt(nB,B.LB),B.luck);
- h+=row('Teams\' normal scoring vs Vegas','teams usually score '+f2((P.hA.ppp+P.hB.ppp)/2)+'/trip, Vegas line implies '+f2(B.vegasPPP),B.base);
- h+=row('Turnovers & rebounds','what\'s left: extra or lost trips, second chances',B.other);
+ h+=row('Pace',f1(B.possSoFar)+' trips each vs '+f1(B.expPoss)+' on the Vegas clock',B.pace);
+ const A=live.teams[a],Bt=live.teams[b],TA=B.TA,TB=B.TB;
+ h+='<div class="sec">How trips ended</div>';
+ h+=row('Turnovers',nA+' '+A.tov+' vs '+f1(TA.tovN)+' normal · '+nB+' '+Bt.tov+' vs '+f1(TB.tovN),B.tov);
+ h+=row('Free-throw trips (net of shots)',nA+' '+A.fta+' FTA vs '+f1(TA.ftaN)+' · '+nB+' '+Bt.fta+' vs '+f1(TB.ftaN),B.ft);
+ h+=row('Threes vs twos',nA+' '+Math.round(TA.s3l*100)+'% threes vs '+Math.round(TA.s3n*100)+'% · '+nB+' '+Math.round(TB.s3l*100)+'% vs '+Math.round(TB.s3n*100)+'%',B.mix);
+ h+=row('Second chances',nA+' '+A.orb+' off. reb vs '+f1(TA.orbN)+' · '+nB+' '+Bt.orb+' vs '+f1(TB.orbN),B.orb);
+ h+='<div class="sec">How well they converted</div>';
+ const lt=(n,L)=>n+': 2s '+sgn(L.l2)+', 3s '+sgn(L.l3)+', FT '+sgn(L.lft);
+ h+=row('Shooting luck',lt(nA,TA)+'<br>'+lt(nB,TB),B.luck);
+ h+=row('Teams\' normal scoring vs Vegas','teams usually score '+f2((P.hA.ppp+P.hB.ppp)/2)+'/trip, Vegas line implies '+f2(P.L/(2*P.expPace)),B.base);
+ if(Math.abs(B.check)>0.5)h+=plain('Unexplained','should be ~0; if not, the math is off',sgn(B.check),'sub');
  h+='<div class="sec">Rest of game</div>';
  h+=row('Pace carried forward',Math.round(P.w*100)+'% of tonight\'s speed kept · '+f1(P.vegasRem)+' Vegas pts left',P.carryPace);
  h+=plain('Shooting','resets to each team\'s normal','0.0','sub');
@@ -677,7 +694,7 @@ function sidePanel(G,P,c){
   h+=plain((P.lineAuto?'DraftKings live':'Live line'),'price '+P.price+' · break-even '+(P.be*100).toFixed(1)+'%',f1(P.line),'');
   h+='<div class="verdict '+(pSide>P.be+0.03?side:'')+'" style="margin-top:8px">Edge <b>'+sgn(P.edge)+'</b> → '+side+' · chance '+Math.round(pSide*100)+'%</div>';
  }else h+='<p class="note">No live line yet.</p>';
- h+='<p class="note">Bars show how many points each effect adds (green) or takes away (red) vs the Vegas pregame total. Shooting luck counts a miss as worth about one offensive-rebound chance, not zero.</p>';
+ h+='<p class="note">Bars show how many points each effect adds (green) or takes away (red) vs the Vegas pregame total. Every trip is counted once by how it ended, so fewer free throws or turnovers show up as extra shots, netted automatically. The rows add up exactly to points so far vs Vegas.</p>';
  return h+'</div>';
 }
 
