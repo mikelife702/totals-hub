@@ -84,7 +84,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v13 · data from ESPN · lines from DraftKings · <a href="backtest.html" style="color:#fff">Season replay →</a></div>
+<div class="sub">Over/under model · v14 · data from ESPN · lines from DraftKings · <a href="backtest.html" style="color:#fff">Season replay →</a></div>
 </header>
 <main>
 <div class="row">
@@ -100,7 +100,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <script>
 const CFG={
  nba:{path:'basketball/nba',periods:4,plen:12,total:48,ot:5,ftc:0.44,sd:17,h1share:0.5,name:'NBA',endMin:4,bands:[[3,'close',0.8],[10,'fouling range',1.3],[999,'blowout',0.4]]},
- ncaa:{path:'basketball/mens-college-basketball',periods:2,plen:20,total:40,ot:5,ftc:0.475,sd:15,h1share:0.47,name:'College',endMin:4,bands:[[5,'close',0.7],[12,'fouling range',1.3],[999,'blowout',0.4]]}
+ ncaa:{path:'basketball/mens-college-basketball',periods:2,plen:20,total:40,ot:5,ftc:0.475,sd:15,h1share:0.47,name:'College',endMin:4,bands:[[5,'close',0.7],[12,'fouling range',1.3],[999,'blowout',0.4]],meff:[[8,0.02,'close (0–8)'],[14,0,'9–14'],[999,-0.02,'blowout (15+)']]}
 };
 const BASE='https://site.api.espn.com/apis/site/v2/sports/';
 const NGAMES=10, VER='r2';
@@ -364,17 +364,19 @@ function project(G){
  const endActive=el>=c.total-10&&live.state==='in';
  const bm=bandMix(c,margin,c.total-el);
  const em=endActive&&band?bm.mix:1;
- const modelRem=K.reg*paceAdj+K.prem*em;
+ // 2nd-half score margin (college, measured Nov 26): close games score ~2% more per trip in regular play, 15+ blowouts ~2% less. NBA: no effect.
+ const meB=el>=c.total/2-0.01&&live.state==='in'&&c.meff?c.meff.find(x=>margin<=x[0]):null,mEff=meB?meB[1]:0;
+ const modelRem=K.reg*paceAdj*(1+mEff)+K.prem*em;
  const BN=bounceAdj(BOUNCES[G.lg],[a,b],[hA,hB],[A,B],[lA&&lA.pm,lB&&lB.pm],expPace&&L?expPace*(vegasRem/L)*paceAdj:0);
  const proj=pts+modelRem+BN.total;
  const asIs=el?pts/el*c.total:0;
  const sdRem=c.sd*Math.sqrt(Math.max(1-f,0.0001));
- const out={L,L1,line,lineAuto:!!lineAuto,h2,el,f,pts,w,method,paceAdj,expPace,livePace,sA,sB,lA,lB,hA,hB,vegasRem,modelRem,proj,BN,asIs,sdRem,K,margin,band,bm,endActive,em,carryPace:K.reg*(paceAdj-1),carryEnd:K.prem*(em-1)};
+ const out={L,L1,line,lineAuto:!!lineAuto,h2,el,f,pts,w,method,paceAdj,expPace,livePace,sA,sB,lA,lB,hA,hB,vegasRem,modelRem,proj,BN,asIs,sdRem,K,margin,band,bm,endActive,em,mEff,meB,carryMargin:K.reg*paceAdj*mEff,carryPace:K.reg*(paceAdj-1),carryEnd:K.prem*(em-1)};
  out.price=G.price||'-110';out.be=breakEven(out.price);
  if(line){out.bookRem=line-pts;out.edge=proj-line;out.pOver=1-phi((line-proj)/sdRem);
   if(!G.price&&lineAuto){const pr=out.edge>0?dk.overOdds:dk.underOdds;if(pr){out.price=(pr>0?'+':'')+pr;out.be=breakEven(pr)}}}
  if(h2&&el<=c.total/2+0.01){
-  out.model2H=K.r1*(c.total/2)*paceAdj+K.P0+BN.total;out.h2edge=out.model2H-h2;
+  out.model2H=K.r1*(c.total/2)*paceAdj*(1+mEff)+K.P0+BN.total;out.h2edge=out.model2H-h2;
   out.p2Over=1-phi((h2-out.model2H)/(c.sd*Math.sqrt(0.5)));
  }
  return out;
@@ -806,6 +808,7 @@ function sidePanel(G,P,c){
  if(Math.abs(B.check)>0.5)h+=plain('Unexplained','should be ~0; if not, the math is off',sgn(B.check),'sub');
  h+='<div class="sec">Rest of game</div>';
  h+=row('Pace carried forward',Math.round(P.w*100)+'% of tonight\'s speed kept · '+f1(P.vegasRem)+' Vegas pts left',P.carryPace);
+ h+=row('Score margin (2nd half)',c.meff?(P.meB?'margin '+P.margin+' → '+P.meB[2]+': '+(P.mEff>0?'+':'')+Math.round(P.mEff*100)+'% per trip before the endgame':'applies from halftime (close +2%, 15+ −2%)'):'NBA: no margin effect before the endgame (measured)',P.meB?P.carryMargin:0);
  const pc=v=>v==null?'–':Math.round(v*100)+'%',BOUNCE=BOUNCES[G.lg];
  h+=row('Threes: volume and bounce-back','rest of game vs normal volume at normal %'+(BOUNCE.k3||BOUNCE.k2||BOUNCE.v3?'':' · settings at 0 = straight back to normal'),P.BN.total);
  if(P.BN.teams.length){
