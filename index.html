@@ -82,7 +82,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v8 · data from ESPN · lines from DraftKings</div>
+<div class="sub">Over/under model · v9 · data from ESPN · lines from DraftKings</div>
 </header>
 <main>
 <div class="row">
@@ -219,7 +219,7 @@ function buildRecord(sum,c,withDetail){
   if(!dk.close&&pc.overUnder)dk.close=+pc.overUnder;
  }
  const st=status.type||{};
- return{teams,order,state:st.state,completed:!!st.completed,detail:st.shortDetail||'',elapsed:elapsedMin(c,status),date:comp.date,ou,dk,hasPlays,periods,timeline};
+ return{teams,order,state:st.state,completed:!!st.completed,detail:st.shortDetail||'',elapsed:elapsedMin(c,status),date:comp.date,neutral:!!comp.neutralSite,ou,dk,hasPlays,periods,timeline};
 }
 
 async function record(lg,id,final){
@@ -393,6 +393,7 @@ async function openGame(id){
  const c=CFG[league];
  try{
   const live=await record(league,id,false);
+  await loadRatings(league);
   const saved=cacheGet('lines_'+id)||{};
   cur={lg:league,id,live,hist:{},L:saved.L||(live.dk&&live.dk.close)||live.ou||'',L1:saved.L1||'',line:saved.line||'',h2:saved.h2||'',price:saved.price&&saved.price!=='-110'?saved.price:'',log:saved.log||[]};
   logDK();
@@ -627,7 +628,12 @@ function projBlock(G,P,c){
  return html;
 }
 
-const LGC={};
+const LGC={},RAT={};
+async function loadRatings(lg){
+ if(RAT[lg]!==undefined)return RAT[lg];
+ try{const r=await fetch('data/'+lg+'-ratings.json',{cache:'no-cache'});RAT[lg]=r.ok?await r.json():null}catch(e){RAT[lg]=null}
+ return RAT[lg];
+}
 function leagueAvg(lg,hA,hB,c){
  if(LGC[lg]&&LGC[lg].n>=30)return LGC[lg];
  let pts=0,ps=0,gp=0,mins=0,n=0;
@@ -643,6 +649,17 @@ function leagueAvg(lg,hA,hB,c){
 
 function pregame(G){
  const c=CFG[G.lg],live=G.live,[a,b]=live.order;
+ const RT=RAT[G.lg],rA=RT&&RT.ratings[a],rB=RT&&RT.ratings[b];
+ if(rA&&rB){
+  const lg=RT.lg,hca=(RT.settings&&RT.settings.hca)||0.014;
+  const hf=id=>live.neutral?1:(live.teams[id].homeAway==='home'?1+hca:1-hca);
+  const adjA=rA.o*rB.d/lg.eff*hf(a),adjB=rB.o*rA.d/lg.eff*hf(b);
+  const pace=rA.t*rB.t/lg.tempo;
+  const total=pace*(adjA+adjB);
+  const L=+G.L||0,L1=+G.L1||0,share=L&&L1?L1/L:c.h1share;
+  const hA=G.hist[a]&&G.hist[a].l10,hB=G.hist[b]&&G.hist[b].l10;
+  return{src:'ratings',rA,rB,RT,pace,adjA,adjB,total,h1:total*share,share,lg:{ppp:lg.eff,src:'opponent-adjusted ratings ('+RT.games+' games, updated '+new Date(RT.updated).toLocaleDateString()+')'},ptsA:pace*adjA,ptsB:pace*adjB,hA:hA||{ppp:rA.o,oppp:rA.d,pace:rA.t},hB:hB||{ppp:rB.o,oppp:rB.d,pace:rB.t},L,L1:L1||(L?L*c.h1share:0),L1real:!!L1};
+ }
  const hA=G.hist[a]&&G.hist[a].l10,hB=G.hist[b]&&G.hist[b].l10;
  if(!hA||!hB||!hA.ppp||!hB.ppp||!hA.oppp||!hB.oppp)return null;
  const lg=leagueAvg(G.lg,hA,hB,c);if(!lg)return null;
@@ -662,6 +679,24 @@ function preCard(G){
  h+='<tr><td>Full game</td><td class="big">'+f1(M.total)+'</td><td>'+(M.L?f1(M.L):'–')+'</td><td>'+d(M.total,M.L)+'</td></tr>';
  h+='<tr><td>1st half</td><td>'+f1(M.h1)+'</td><td>'+(M.L1?f1(M.L1)+(M.L1real?'':'*'):'–')+'</td><td>'+d(M.h1,M.L1)+'</td></tr>';
  h+='<tr><td>2nd half</td><td>'+f1(M.total-M.h1)+'</td><td>'+(M.L?f1(M.L-M.L1)+(M.L1real?'':'*'):'–')+'</td><td>'+d(M.total-M.h1,M.L?M.L-M.L1:0)+'</td></tr></table></div>';
+ if(M.src==='ratings'){
+  const p=x=>x==null?'–':(x*100).toFixed(1),sp=s=>s?p(s.o)+' / '+p(s.d)+' <small>('+s.g+' g)</small>':'–';
+  const loc=id=>live.neutral?'neutral':live.teams[id].homeAway;
+  h+='<div class="tblwrap"><table><tr><th>Opponent-adjusted ratings</th><th>'+nA+'</th><th>'+nB+'</th></tr>';
+  h+='<tr><td>Rank (of '+M.RT.teams+')</td><td>#'+M.rA.rank+'</td><td>#'+M.rB.rank+'</td></tr>';
+  h+='<tr><td>Offense (pts per 100 trips)</td><td>'+p(M.rA.o)+'</td><td>'+p(M.rB.o)+'</td></tr>';
+  h+='<tr><td>Defense allows (per 100)</td><td>'+p(M.rA.d)+'</td><td>'+p(M.rB.d)+'</td></tr>';
+  h+='<tr><td>Tempo (trips per game)</td><td>'+f1(M.rA.t)+'</td><td>'+f1(M.rB.t)+'</td></tr>';
+  h+='<tr><td>Last 5 games (off / def)</td><td>'+sp(M.rA.last5)+'</td><td>'+sp(M.rB.last5)+'</td></tr>';
+  h+='<tr><td>vs top-50 teams</td><td>'+sp(M.rA.splits.top50)+'</td><td>'+sp(M.rB.splits.top50)+'</td></tr>';
+  h+='<tr><td>Conference games</td><td>'+sp(M.rA.splits.conf)+'</td><td>'+sp(M.rB.splits.conf)+'</td></tr>';
+  h+='<tr><td>3PA share / 3P% (adj.)</td><td>'+Math.round(M.rA.f.o_tpar*100)+'% / '+(M.rA.f.o_tp*100).toFixed(1)+'%</td><td>'+Math.round(M.rB.f.o_tpar*100)+'% / '+(M.rB.f.o_tp*100).toFixed(1)+'%</td></tr>';
+  h+='<tr><td>Turnover % / Off. reb % (adj.)</td><td>'+(M.rA.f.o_tov*100).toFixed(1)+'% / '+(M.rA.f.o_orb*100).toFixed(1)+'%</td><td>'+(M.rB.f.o_tov*100).toFixed(1)+'% / '+(M.rB.f.o_orb*100).toFixed(1)+'%</td></tr>';
+  h+='<tr><td>Expected tonight (per trip)</td><td><b>'+f2(M.adjA)+'</b> <small>'+loc(a)+'</small></td><td><b>'+f2(M.adjB)+'</b> <small>'+loc(b)+'</small></td></tr>';
+  h+='<tr><td>Expected points</td><td><b>'+f1(M.ptsA)+'</b></td><td><b>'+f1(M.ptsB)+'</b></td></tr></table></div>';
+  h+='<p class="note">Each team\'s numbers are adjusted for who they played and where, with recent games counting more (a game 30 days old counts half). Expected per trip = own offense × opponent\'s defense ÷ league average '+f2(M.lg.ppp)+', ± home court. Matchup tempo '+f1(M.pace)+' trips each. Source: '+M.lg.src+'. 1st half uses '+(M.L1real?'Vegas\'s 1st-half share':'an estimated share')+' ('+Math.round(M.share*100)+'%).'+(M.L1real?'':' * = estimated, enter the real 1st-half line.')+'</p></div>';
+  return h;
+ }
  h+='<div class="tblwrap"><table><tr><th>Offense vs defense</th><th>'+nA+'</th><th>'+nB+'</th></tr>';
  h+='<tr><td>Own offense (pts per trip)</td><td>'+f2(M.hA.ppp)+'</td><td>'+f2(M.hB.ppp)+'</td></tr>';
  h+='<tr><td>Opponent\'s defense allows</td><td>'+f2(M.hB.oppp)+'</td><td>'+f2(M.hA.oppp)+'</td></tr>';
