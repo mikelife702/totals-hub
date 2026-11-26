@@ -7,6 +7,7 @@
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#fff;color:#111;font-size:15px}
+.bset{font-size:12px;color:#444;margin:2px 0 8px;line-height:1.9}.bset input{width:52px;padding:3px 5px;font-size:14px;display:inline-block}.bset small{display:block;color:#777;line-height:1.3}
 header{background:#1f3a5f;color:#fff;padding:12px 14px}
 header h1{margin:0;font-size:18px;font-weight:600}
 header .sub{font-size:12px;opacity:.85;margin-top:2px}
@@ -82,7 +83,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v10 · data from ESPN · lines from DraftKings · <a href="backtest.html" style="color:#fff">Season replay →</a></div>
+<div class="sub">Over/under model · v11 · data from ESPN · lines from DraftKings · <a href="backtest.html" style="color:#fff">Season replay →</a></div>
 </header>
 <main>
 <div class="row">
@@ -308,6 +309,21 @@ function bandMix(c,m,trem){const E=c.endMin,h=trem>E?trem-E/2:trem/2,s=1.75*Math
  const ps=c.bands.map(b=>{const cum=b[0]>=999?1:phi((b[0]+0.5-m)/s)-phi((-b[0]-0.5-m)/s);const p=Math.max(0,cum-prev);prev=Math.max(prev,cum);mix+=p*b[2];return{label:b[1],mult:b[2],p}});
  return{mix,ps}}
 function marginBand(c,m){for(const b of c.bands){if(m<=b[0])return{label:b[1],mult:b[2],max:b[0]}}return null}
+// Shooting bounce-back (Mike's idea): after a hot half a team may shoot BELOW its normal the rest of the game,
+// after a cold half ABOVE it. Setting = % of tonight's gap reversed. 0 = plain reset to normal (old behaviour).
+// Separate settings for college and NBA: the two leagues behave differently.
+const BOUNCES={ncaa:Object.assign({k3:0,k2:0,min3:8,min2:10},cacheGet('th_bounce_ncaa')||{}),nba:Object.assign({k3:0,k2:0,min3:10,min2:14},cacheGet('th_bounce_nba')||{})};
+function setBounce(){const B=BOUNCES[cur.lg];['k3','k2'].forEach(k=>{const v=parseFloat(document.getElementById('bn_'+k).value);B[k]=isNaN(v)?0:Math.max(-100,Math.min(100,v))});cacheSet('th_bounce_'+cur.lg,B);render()}
+function bounceAdj(BOUNCE,ids,hs,ts,remPoss){
+ const out={teams:[],total:0};
+ ids.forEach((id,i)=>{const h=hs[i],t=ts[i];if(!h||!h.raw||!h.myPoss||!(remPoss>0))return;
+  const r=h.raw,p3n=r.tpa?r.tpm/r.tpa:0,a2=r.fga-r.tpa,p2n=a2?(r.fgm-r.tpm)/a2:0,fpt=r.fga/h.myPoss,s3n=r.fga?r.tpa/r.fga:0;
+  const t2a=t.fga-t.tpa,p3l=t.tpa?t.tpm/t.tpa:null,p2l=t2a?(t.fgm-t.tpm)/t2a:null;
+  const sh3=p3l!=null&&t.tpa>=BOUNCE.min3?-BOUNCE.k3/100*(p3l-p3n):0,sh2=p2l!=null&&t2a>=BOUNCE.min2?-BOUNCE.k2/100*(p2l-p2n):0;
+  const r3=remPoss*fpt*s3n,r2=remPoss*fpt*(1-s3n),pts3=r3*3*sh3,pts2=r2*2*sh2;
+  out.teams.push({name:t.name,tpm:t.tpm,tpa:t.tpa,p3l,p3n,exp3:p3n+sh3,pts3,m2:t.fgm-t.tpm,t2a,p2l,p2n,exp2:p2n+sh2,pts2,r3});
+  out.total+=pts3+pts2});
+ return out}
 function breakEven(price){const p=+price;if(!p)return 110/210;return p<0?(-p)/(-p+100):100/(p+100)}
 
 function project(G){
@@ -340,15 +356,16 @@ function project(G){
  const bm=bandMix(c,margin,c.total-el);
  const em=endActive&&band?bm.mix:1;
  const modelRem=K.reg*paceAdj+K.prem*em;
- const proj=pts+modelRem;
+ const BN=bounceAdj(BOUNCES[G.lg],[a,b],[hA,hB],[A,B],expPace&&L?expPace*(vegasRem/L)*paceAdj:0);
+ const proj=pts+modelRem+BN.total;
  const asIs=el?pts/el*c.total:0;
  const sdRem=c.sd*Math.sqrt(Math.max(1-f,0.0001));
- const out={L,L1,line,lineAuto:!!lineAuto,h2,el,f,pts,w,method,paceAdj,expPace,livePace,sA,sB,lA,lB,hA,hB,vegasRem,modelRem,proj,asIs,sdRem,K,margin,band,bm,endActive,em,carryPace:K.reg*(paceAdj-1),carryEnd:K.prem*(em-1)};
+ const out={L,L1,line,lineAuto:!!lineAuto,h2,el,f,pts,w,method,paceAdj,expPace,livePace,sA,sB,lA,lB,hA,hB,vegasRem,modelRem,proj,BN,asIs,sdRem,K,margin,band,bm,endActive,em,carryPace:K.reg*(paceAdj-1),carryEnd:K.prem*(em-1)};
  out.price=G.price||'-110';out.be=breakEven(out.price);
  if(line){out.bookRem=line-pts;out.edge=proj-line;out.pOver=1-phi((line-proj)/sdRem);
   if(!G.price&&lineAuto){const pr=out.edge>0?dk.overOdds:dk.underOdds;if(pr){out.price=(pr>0?'+':'')+pr;out.be=breakEven(pr)}}}
  if(h2&&el<=c.total/2+0.01){
-  out.model2H=K.r1*(c.total/2)*paceAdj+K.P0;out.h2edge=out.model2H-h2;
+  out.model2H=K.r1*(c.total/2)*paceAdj+K.P0+BN.total;out.h2edge=out.model2H-h2;
   out.p2Over=1-phi((h2-out.model2H)/(c.sd*Math.sqrt(0.5)));
  }
  return out;
@@ -780,7 +797,10 @@ function sidePanel(G,P,c){
  if(Math.abs(B.check)>0.5)h+=plain('Unexplained','should be ~0; if not, the math is off',sgn(B.check),'sub');
  h+='<div class="sec">Rest of game</div>';
  h+=row('Pace carried forward',Math.round(P.w*100)+'% of tonight\'s speed kept · '+f1(P.vegasRem)+' Vegas pts left',P.carryPace);
- h+=plain('Shooting','resets to each team\'s normal','0.0','sub');
+ const pc=v=>v==null?'–':Math.round(v*100)+'%',BOUNCE=BOUNCES[G.lg];
+ const bnSub=(BOUNCE.k3||BOUNCE.k2)&&P.BN.teams.length?P.BN.teams.map(x=>x.name+': 3s '+x.tpm+'/'+x.tpa+' ('+pc(x.p3l)+') vs '+pc(x.p3n)+' normal → '+pc(x.exp3)+' rest of game'+(BOUNCE.k2?'; 2s '+pc(x.p2l)+' vs '+pc(x.p2n)+' → '+pc(x.exp2):'')).join('<br>'):'resets to each team\'s normal (bounce-back setting 0%)';
+ h+=row('Shooting bounce-back',bnSub,P.BN.total);
+ h+='<div class="bset">Reverse <input id="bn_k3" inputmode="decimal" value="'+BOUNCE.k3+'" onchange="setBounce()">% of the gap on 3s, <input id="bn_k2" inputmode="decimal" value="'+BOUNCE.k2+'" onchange="setBounce()">% on 2s ('+c.name+' setting) <small>(0 = back to normal; 20 on a 70% vs 32% half = about 7 points below normal; needs '+BOUNCE.min3+'+ threes / '+BOUNCE.min2+'+ twos)</small></div>';
  h+=row('End of game (fouling)',P.endActive&&P.band?'margin '+P.margin+' → '+P.bm.ps.map(x=>x.label+' '+Math.round(100*x.p)+'%').join(', ')+' (×'+P.em.toFixed(2)+' on Vegas\'s late bump)':'Vegas\'s average ending; margin rule starts with 10 min left',P.carryEnd);
  h+=plain('<b>Model final</b>','',f1(P.proj),'tot');
  if(P.line){
