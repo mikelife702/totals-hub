@@ -70,17 +70,30 @@ async function updateGames(lg, cfg) {
   const store = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { games: {} };
   const today = new Date();
   const ids = [];
+  const meta = {}, confTeams = {};
   for (let d = new Date(cfg.start + 'T12:00:00Z'); d < today; d.setUTCDate(d.getUTCDate() + 1)) {
     const sb = await getJSON(BASE + cfg.path + '/scoreboard?dates=' + ymd(d) + cfg.extra);
     for (const e of (sb && sb.events) || []) {
       const st = e.status && e.status.type;
-      if (st && st.completed && !store.games[e.id]) ids.push(String(e.id));
+      if (!(st && st.completed)) continue;
+      const c = e.competitions && e.competitions[0];
+      if (c) {
+        meta[String(e.id)] = { neutral: !!c.neutralSite, confGame: !!c.conferenceCompetition };
+        (c.competitors || []).forEach(t => { if (t.team && t.team.conferenceId) confTeams[String(t.team.id)] = t.team.conferenceId; });
+      }
+      if (!store.games[e.id]) ids.push(String(e.id));
     }
   }
   console.log(lg + ': ' + Object.keys(store.games).length + ' cached games, ' + ids.length + ' new to fetch');
   const recs = await pool(ids, 6, async id => compactGame(await getJSON(BASE + cfg.path + '/summary?event=' + id), cfg));
   let added = 0;
   recs.forEach(r => { if (r) { store.games[r.id] = r; added++; } });
+  // scoreboard carries conference and neutral-site info that game summaries lack
+  for (const g of Object.values(store.games)) {
+    const m = meta[g.id];
+    if (m) { g.neutral = m.neutral; g.confGame = m.confGame; }
+    g.teams.forEach(t => { if (confTeams[t.id]) t.conf = confTeams[t.id]; });
+  }
   store.updated = new Date().toISOString();
   fs.writeFileSync(file, JSON.stringify(store));
   console.log(lg + ': added ' + added + ', total ' + Object.keys(store.games).length);
