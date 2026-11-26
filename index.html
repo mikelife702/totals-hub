@@ -10,7 +10,7 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Ari
 header{background:#1f3a5f;color:#fff;padding:12px 14px}
 header h1{margin:0;font-size:18px;font-weight:600}
 header .sub{font-size:12px;opacity:.85;margin-top:2px}
-main{padding:12px 10px;max-width:900px;margin:0 auto}
+main{padding:12px 10px;max-width:1280px;margin:0 auto}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
 button{font:inherit;padding:8px 12px;border:1px solid #1f3a5f;background:#fff;color:#1f3a5f;border-radius:6px;cursor:pointer}
 button.on{background:#1f3a5f;color:#fff}
@@ -52,6 +52,19 @@ h3{font-size:14px;margin:14px 0 4px}
 .layer{border-top:3px solid #1f3a5f;margin-top:16px;padding-top:4px}
 .dkbar{background:#f4f6f9;border-radius:8px;padding:7px 10px;font-size:13px;margin:-4px 0 10px}
 .dkbar b{font-size:15px}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:18px;align-items:start}
+.side{position:sticky;top:8px;border:1px solid #dfe4ea;border-radius:10px;padding:10px 12px;background:#fff}
+.side h3{margin:2px 0 8px}
+.bk{display:grid;grid-template-columns:minmax(0,1fr) 120px 52px;gap:6px;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid #f0f2f5}
+.bk .lab small{display:block;color:#888;font-size:11px}
+.bk .val{text-align:right;font-weight:600;white-space:nowrap}
+.bar{position:relative;height:12px;background:#f4f6f9;border-radius:3px}
+.bar:after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;border-left:1px solid #b8c0ca}
+.bar i{position:absolute;top:0;bottom:0;border-radius:3px}
+.bk.tot{border-top:2px solid #1f3a5f;border-bottom:none;font-size:14px}
+.bk.sub{font-size:12px;color:#555}
+.sec{font-size:11px;color:#1f3a5f;font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin:10px 0 2px}
+@media(max-width:980px){.wrap{grid-template-columns:minmax(0,1fr)}.side{position:static;order:-1}}
 .pacebox{border-left:3px solid #1f3a5f;padding:6px 10px;margin:6px 0;font-size:14px;background:#f8fafc}
 @media(max-width:520px){.lines{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
@@ -59,7 +72,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v4 · data from ESPN · lines from DraftKings</div>
+<div class="sub">Over/under model · v5 · data from ESPN · lines from DraftKings</div>
 </header>
 <main>
 <div class="row">
@@ -592,6 +605,60 @@ function projBlock(G,P,c){
  return html;
 }
 
+function breakdown(G,P,c){
+ const live=G.live,[a,b]=live.order;
+ if(!P.L||live.state==='pre'||P.el<=0||!P.hA||!P.hB||!P.expPace)return null;
+ const expPossSoFar=P.expPace*P.f;
+ const possSoFar=(P.lA.pm+P.lB.pm)/2;
+ const ptsPerPoss=P.L/P.expPace;
+ const vegasSoFar=P.L-P.vegasRem;
+ const D=P.pts-vegasSoFar;
+ const pace=(possSoFar-expPossSoFar)*ptsPerPoss;
+ const luckTeam=id=>{
+  const t=live.teams[id],h=G.hist[id]&&G.hist[id].l10;if(!h||!h.raw)return{l3:0,l2:0,lft:0,tot:0};
+  const r=h.raw,p3=r.tpa?r.tpm/r.tpa:0,a2=r.fga-r.tpa,p2=a2?(r.fgm-r.tpm)/a2:0,pft=r.fta?r.ftm/r.fta:0;
+  const mv=h.orbp!=null?h.orbp:0.3;
+  const l3=(t.tpm-t.tpa*p3)*(3-mv),l2=((t.fgm-t.tpm)-(t.fga-t.tpa)*p2)*(2-mv),lft=t.ftm-t.fta*pft;
+  return{l3,l2,lft,tot:l3+l2+lft,p3,p2,pft};
+ };
+ const LA=luckTeam(a),LB=luckTeam(b);
+ const luck=LA.tot+LB.tot;
+ const other=D-pace-luck;
+ const carry=P.modelRem-P.vegasRem;
+ return{vegasSoFar,D,pace,luck,LA,LB,other,carry,expPossSoFar,possSoFar};
+}
+
+function sidePanel(G,P,c){
+ const live=G.live,[a,b]=live.order,nA=live.teams[a].name,nB=live.teams[b].name;
+ let h='<div class="side"><h3>Why the model says '+(P.L&&live.state!=='pre'&&P.el>0?f1(P.proj):'–')+'</h3>';
+ const B=breakdown(G,P,c);
+ if(!B){return h+'<p class="note">'+(!P.L?'Needs the pregame total.':live.state==='pre'?'Appears once the game starts.':'Waiting for both teams\' history to load.')+'</p></div>'}
+ const vals=[B.pace,B.luck,B.other,B.carry];
+ const mx=Math.max(4,...vals.map(Math.abs));
+ const bar=v=>{const w=Math.min(50,Math.abs(v)/mx*50);return'<div class="bar"><i style="'+(v>=0?'left:50%':'right:50%')+';width:'+w+'%;background:'+(v>=0?'#2e7d32':'#b42318')+'"></i></div>'};
+ const row=(lab,sub,v,cls)=>'<div class="bk '+(cls||'')+'"><div class="lab">'+lab+(sub?'<small>'+sub+'</small>':'')+'</div>'+(v==null?'<div></div><div class="val">–</div>':bar(v)+'<div class="val" style="color:'+(v>=0?'#2e7d32':'#b42318')+'">'+sgn(v)+'</div>')+'</div>';
+ const plain=(lab,sub,txt,cls)=>'<div class="bk '+(cls||'')+'"><div class="lab">'+lab+(sub?'<small>'+sub+'</small>':'')+'</div><div></div><div class="val">'+txt+'</div></div>';
+ h+=plain('Vegas pregame total','DraftKings close / your entry',f1(P.L),'');
+ h+='<div class="sec">So far · '+f1(P.el)+' of '+c.total+' min</div>';
+ h+=plain('Points so far vs Vegas pace',P.pts+' scored vs '+f1(B.vegasSoFar)+' expected by now',sgn(B.D),'sub');
+ h+=row('Pace',f1(B.possSoFar)+' possessions vs '+f1(B.expPossSoFar)+' normal by now',B.pace);
+ const lt=(n,L)=>n+': 3s '+sgn(L.l3)+', 2s '+sgn(L.l2)+', FT '+sgn(L.lft);
+ h+=row('Shooting luck',lt(nA,B.LA)+'<br>'+lt(nB,B.LB),B.luck);
+ h+=row('Turnovers, rebounds, shot volume','everything else vs Vegas pace',B.other);
+ h+='<div class="sec">Rest of game</div>';
+ h+=row('Pace carried forward',Math.round(P.w*100)+'% of tonight\'s speed kept · '+f1(P.vegasRem)+' Vegas pts left',B.carry);
+ h+=plain('Shooting','resets to each team\'s normal','0.0','sub');
+ h+=plain('End of game (fouling, margin)','not modeled yet','–','sub');
+ h+=plain('<b>Model final</b>','',f1(P.proj),'tot');
+ if(P.line){
+  const side=P.edge>0?'over':'under',pSide=P.edge>0?P.pOver:1-P.pOver;
+  h+=plain((P.lineAuto?'DraftKings live':'Live line'),'price '+P.price+' · break-even '+(P.be*100).toFixed(1)+'%',f1(P.line),'');
+  h+='<div class="verdict '+(pSide>P.be+0.03?side:'')+'" style="margin-top:8px">Edge <b>'+sgn(P.edge)+'</b> → '+side+' · chance '+Math.round(pSide*100)+'%</div>';
+ }else h+='<p class="note">No live line yet.</p>';
+ h+='<p class="note">Bars show how many points each effect adds (green) or takes away (red) vs the Vegas pregame total. Shooting luck counts a miss as worth about one offensive-rebound chance, not zero.</p>';
+ return h+'</div>';
+}
+
 function render(){
  const G=cur,c=CFG[G.lg],live=G.live,[a,b]=live.order,A=live.teams[a],B=live.teams[b];
  const away=A.homeAway==='away'?A:B,home=A.homeAway==='away'?B:A,pre=live.state==='pre';
@@ -605,7 +672,7 @@ function render(){
   html+='<div class="dkbar">'+dk.prov+': '+(live.state==='in'&&dk.live?'live <b>'+dk.live+'</b> (over '+o(dk.overOdds)+' / under '+o(dk.underOdds)+') · ':'')+'pregame close '+(dk.close||'–')+' · open '+(dk.open||'–')+(live.state==='in'?' · updates every 45s':'')+'<br><span class="note">Live total and price fill in from DraftKings automatically. Type your own to override; clear the box to go back to DraftKings. Confirm the line in the DraftKings app before betting.</span></div>';
  }
  html+='<div class="row"><button onclick="refreshLive()">Refresh live</button><span class="note">Auto-refreshes every 45s while live.</span></div>';
- html+=avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div>';
+ html+='<div class="wrap"><div>'+avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div></div>'+sidePanel(G,P,c)+'</div>';
  const active=document.activeElement&&document.activeElement.id;
  document.getElementById('game').innerHTML=html;
  if(active&&document.getElementById(active))document.getElementById(active).focus();
