@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Season Replay · Totals Hub</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#fff;color:#111;font-size:15px}
+header{background:#1f3a5f;color:#fff;padding:12px 14px}
+header h1{margin:0;font-size:18px;font-weight:600}
+header .sub{font-size:12px;opacity:.85;margin-top:2px}
+header a{color:#fff}
+main{padding:12px 10px;max-width:1100px;margin:0 auto}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+button{font:inherit;padding:8px 12px;border:1px solid #1f3a5f;background:#fff;color:#1f3a5f;border-radius:6px;cursor:pointer}
+button.on{background:#1f3a5f;color:#fff}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:10px 0}
+.card{background:#f4f6f9;border-radius:8px;padding:9px 11px}
+.card .l{font-size:12px;color:#555}
+.card .v{font-size:21px;font-weight:600}
+.card .s{font-size:12px;color:#666}
+h2{font-size:16px;margin:20px 0 4px}
+.note{font-size:13px;color:#555;margin:0 0 8px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-size:12px;color:#555;font-weight:600;background:#fafafa}
+.good{color:#067647;font-weight:600}
+.bad{color:#b42318;font-weight:600}
+.muted{color:#888}
+.warn{background:#fff8e6;border:1px solid #f5d48a;border-radius:8px;padding:9px 11px;font-size:13px;margin:10px 0}
+tr.grp td{background:#f4f6f9;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+<h1>Season replay</h1>
+<div class="sub">Our pregame number vs DraftKings closing total, game by game, using only games played before each date · <a href="./">← Back to hub</a></div>
+</header>
+<main>
+<div class="row">
+<button id="bNcaa" class="on" onclick="load('ncaa')">College (men)</button>
+<button id="bNba" onclick="load('nba')">NBA</button>
+<span id="upd" class="note" style="margin:0 0 0 6px"></span>
+</div>
+<div id="out">Loading…</div>
+</main>
+<script>
+const BE = 52.4;
+const FEAT = {
+  pace: ['Expected pace', 'possessions'],
+  paceVsLg: ['Pace vs league', 'possessions'],
+  offense: ['Offenses vs average', '% better'],
+  defense: ['Defenses vs average', '% worse (+ = leaky)'],
+  form: ['Recent form (last 5 vs season)', 'pts/100'],
+  spread: ['Point spread size', 'pts'],
+  line: ['Closing total', 'pts'],
+  minGames: ['Games played (fewer team)', 'games'],
+  seasonDay: ['Days into season', 'days'],
+  conf: ['Conference game', ''],
+  neutral: ['Neutral site', '']
+};
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const f1 = v => v == null ? '–' : (+v).toFixed(1);
+const sg = v => v == null ? '–' : (v > 0 ? '+' : '') + (+v).toFixed(1);
+// rough 95% margin of error on a win %, in percentage points
+const moe = n => n ? Math.round(98 / Math.sqrt(n)) : null;
+function pctCell(s) {
+  if (!s || s.pct == null) return '<td class="muted">–</td>';
+  const n = s.w + s.l, cls = n < 30 ? 'muted' : s.pct >= BE ? 'good' : 'bad';
+  return '<td class="' + cls + '">' + s.pct.toFixed(1) + '%<span class="muted"> ±' + moe(n) + '</span></td>';
+}
+function roiCell(s) {
+  if (!s || s.roi == null) return '<td class="muted">–</td>';
+  return '<td class="' + (s.roi >= 0 ? 'good' : 'bad') + '">' + sg(s.roi) + '%</td>';
+}
+const rec = s => s ? s.w + '–' + s.l + (s.p ? '–' + s.p : '') : '–';
+
+async function load(lg) {
+  document.getElementById('bNcaa').className = lg === 'ncaa' ? 'on' : '';
+  document.getElementById('bNba').className = lg === 'nba' ? 'on' : '';
+  const out = document.getElementById('out');
+  out.innerHTML = 'Loading…';
+  let d = null;
+  try { const r = await fetch('data/' + lg + '-backtest.json', { cache: 'no-cache' }); if (r.ok) d = await r.json(); } catch (e) {}
+  if (!d) { out.innerHTML = '<div class="warn">No replay yet. It is built by the nightly job; check back after the next run.</div>'; return; }
+  document.getElementById('upd').textContent = 'Updated ' + new Date(d.updated).toLocaleString();
+  if (!d.games) { out.innerHTML = '<div class="warn">No games with closing lines yet. Lines are backfilled on the nightly run.</div>'; return; }
+  const A = d.accuracy, h = [];
+  h.push('<div class="warn">Break-even at −110 is <b>52.4%</b>. The ± is a rough 95% range: with 100 bets a true 52% record can show anywhere from about 42% to 62%. It takes a few hundred bets in a bucket before a win rate means much. Grey = fewer than 30 bets.</div>');
+  h.push('<div class="cards">' +
+    card('Games replayed', d.games, d.days + ' dates') +
+    card('All picks', d.all.pct != null ? d.all.pct.toFixed(1) + '%' : '–', rec(d.all) + ' · ROI ' + sg(d.all.roi) + '%') +
+    card('Avg miss: Vegas', f1(A.maeVegas), 'points off the final') +
+    card('Avg miss: ours', f1(A.maeOurs), 'points off the final') +
+    card('Lean: Vegas', sg(A.biasVegas), '+ = games went over the line') +
+    card('Lean: ours', sg(A.biasOurs), '+ = we were too low') + '</div>');
+
+  h.push('<h2>Does a bigger disagreement win more?</h2><p class="note">Every game we had a number for, grouped by how far our number was from the closing total. We bet the side our number points to.</p>');
+  h.push('<div class="tw"><table><tr><th>Gap vs close</th><th>Bets</th><th>W–L–P</th><th>Win %</th><th>ROI</th></tr>' +
+    d.buckets.map(b => '<tr><td>' + esc(b.range) + ' pts</td><td>' + b.n + '</td><td>' + rec(b) + '</td>' + pctCell(b) + roiCell(b) + '</tr>').join('') + '</table></div>');
+
+  h.push('<h2>Overs vs unders (gap 3+)</h2>');
+  h.push('<div class="tw"><table><tr><th>Side</th><th>Bets</th><th>W–L–P</th><th>Win %</th><th>ROI</th></tr>' +
+    ['over', 'under'].map(k => { const s = d.bySide[k]; return '<tr><td>' + k + '</td><td>' + s.n + '</td><td>' + rec(s) + '</td>' + pctCell(s) + roiCell(s) + '</tr>'; }).join('') + '</table></div>');
+
+  h.push('<h2>Did the line move toward us?</h2><p class="note">Between DraftKings\' opening and closing total. Sharp money moves lines, so a number that the line keeps moving toward is a good sign even before results pile up. 50% = no signal.</p>');
+  const mvRow = (lab, m) => '<tr><td>' + lab + '</td><td>' + m.moved + ' of ' + m.n + '</td><td>' + m.toward + '–' + m.away + '</td><td class="' + (m.pctToward == null || m.moved < 30 ? 'muted' : m.pctToward > 50 ? 'good' : 'bad') + '">' + (m.pctToward == null ? '–' : m.pctToward.toFixed(1) + '%') + '</td></tr>';
+  h.push('<div class="tw"><table><tr><th>Games</th><th>Line moved</th><th>Toward–away</th><th>% toward us</th></tr>' +
+    mvRow('All', d.lineMove.all) + mvRow('Our number 2+ off the open', d.lineMove.gap2) + mvRow('Our number 4+ off the open', d.lineMove.gap4) + '</table></div>');
+
+  if (d.factors && Object.keys(d.factors).length) {
+    h.push('<h2>Where is the edge?</h2><p class="note">Each ingredient split into low / mid / high thirds. <b>Vegas miss</b> = average final minus closing total (+ means those games went over). A group where Vegas misses the same way week after week is a lead worth building into the model. <b>Our picks</b> = how our 3+ point disagreements did in that group.</p>');
+    let t = '<div class="tw"><table><tr><th>Group</th><th>Range</th><th>Games</th><th>Vegas miss</th><th>Over %</th><th>Our miss</th><th>Our picks</th><th>Win %</th></tr>';
+    for (const k of Object.keys(d.factors)) {
+      const meta = FEAT[k] || [k, ''];
+      t += '<tr class="grp"><td colspan="8">' + esc(meta[0]) + (meta[1] ? ' <span class="muted">(' + esc(meta[1]) + ')</span>' : '') + '</td></tr>';
+      for (const g of d.factors[k]) {
+        const vm = g.vegasMiss, strong = g.n >= 60 && vm != null && Math.abs(vm) >= 2;
+        t += '<tr><td>' + esc(g.label) + '</td><td>' + (g.label === 'yes' || g.label === 'no' ? '' : f1(g.from) + ' to ' + f1(g.to)) + '</td><td>' + g.n + '</td>' +
+          '<td class="' + (strong ? (vm > 0 ? 'good' : 'bad') : '') + '">' + sg(vm) + '</td><td>' + f1(g.overPct) + '%</td><td>' + sg(g.ourMiss) + '</td><td>' + rec(g.picks) + '</td>' + pctCell(g.picks) + '</tr>';
+      }
+    }
+    h.push(t + '</table></div>');
+  }
+
+  const rows = (d.rows || []).slice().reverse().slice(0, 60);
+  h.push('<h2>Latest games</h2><div class="tw"><table><tr><th>Date</th><th>Game</th><th>Ours</th><th>Open</th><th>Close</th><th>Final</th><th>Gap</th><th>Pick</th><th>Result</th></tr>' +
+    rows.map(r => '<tr><td>' + esc(r.day.slice(5)) + '</td><td>' + esc(r.game) + '</td><td>' + f1(r.pred) + '</td><td>' + f1(r.open) + '</td><td>' + f1(r.close) + '</td><td>' + r.final + '</td><td>' + sg(r.diff) + '</td><td>' + r.side + '</td><td class="' + (r.win === true ? 'good' : r.win === false ? 'bad' : 'muted') + '">' + (r.win === true ? 'W' : r.win === false ? 'L' : 'push') + '</td></tr>').join('') + '</table></div>');
+  out.innerHTML = h.join('');
+}
+function card(l, v, s) { return '<div class="card"><div class="l">' + esc(l) + '</div><div class="v">' + esc(v) + '</div><div class="s">' + esc(s) + '</div></div>'; }
+load('ncaa');
+</script>
+</body>
+</html>
