@@ -46,6 +46,10 @@ td small{color:#888;font-size:11px;display:block}
 h2{font-size:16px;margin:14px 0 6px}
 h3{font-size:14px;margin:14px 0 4px}
 .tblwrap{overflow-x:auto}
+.chart{width:100%;height:auto;display:block;margin:4px 0 2px}
+.legend{font-size:12px;color:#555;display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.legend span:before{content:"";display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:middle;background:var(--c)}
+.layer{border-top:3px solid #1f3a5f;margin-top:16px;padding-top:4px}
 .pacebox{border-left:3px solid #1f3a5f;padding:6px 10px;margin:6px 0;font-size:14px;background:#f8fafc}
 @media(max-width:520px){.lines{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
@@ -53,7 +57,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v2 · data from ESPN</div>
+<div class="sub">Over/under model · v3 · data from ESPN</div>
 </header>
 <main>
 <div class="row">
@@ -131,7 +135,40 @@ function possessionTime(plays,c,teams){
 
 function poss(t,c){return t.fga+c.ftc*t.fta-t.orb+t.tov}
 
-function buildRecord(sum,c){
+function playDetail(plays,c,teams,comp){
+ const ids=Object.keys(teams),home=comp.competitors.find(x=>x.homeAway==='home'),homeId=String(home?(home.id||home.team.id):ids[0]);
+ const blank=()=>({pts:0,fgm:0,fga:0,tpm:0,tpa:0,ftm:0,fta:0,orb:0,tov:0});
+ const periods={};
+ const timeline=[{t:0,pts:0,poss:0}];
+ let cum={},lastH=0,lastA=0,lastT=-1;ids.forEach(i=>cum[i]=blank());
+ plays.forEach(p=>{
+  const n=(p.period&&p.period.number)||1;
+  if(!periods[n]){periods[n]={};ids.forEach(i=>periods[n][i]=blank())}
+  const t=periodStart(c,n)+periodLen(c,n)-clockSec(p.clock&&p.clock.displayValue);
+  const tid=p.team&&p.team.id?String(p.team.id):null;
+  const txt=((p.type&&p.type.text)||'')+' '+(p.text||'');
+  const hs=num(p.homeScore),as=num(p.awayScore);
+  if(hs!==lastH||as!==lastA){
+   const dh=hs-lastH,da=as-lastA;
+   ids.forEach(i=>{const d=i===homeId?dh:da;if(d>0)periods[n][i].pts+=d});
+   lastH=hs;lastA=as;
+  }
+  if(tid&&periods[n][tid]){
+   const P=periods[n][tid],C=cum[tid];
+   const add=(k)=>{P[k]++;C[k]++};
+   if(p.shootingPlay){
+    if(/free throw|freethrow/i.test(txt)){add('fta');if(p.scoringPlay)add('ftm')}
+    else{add('fga');if(p.scoringPlay)add('fgm');if(p.pointsAttempted===3||/three point|3-pt|three-point/i.test(txt)){add('tpa');if(p.scoringPlay)add('tpm')}}
+   }else if(/offensive rebound/i.test(txt))add('orb');
+   else if(OFF_RE.test(txt)&&!/kicked ball/i.test(txt))add('tov');
+  }
+  const gp=ids.reduce((s,i)=>s+poss(cum[i],c),0)/2;
+  if(t-lastT>=20||p===plays[plays.length-1]){timeline.push({t:t/60,pts:hs+as,poss:gp});lastT=t}
+ });
+ return{periods,timeline};
+}
+
+function buildRecord(sum,c,withDetail){
  const comp=sum.header.competitions[0];
  const status=comp.status||{};
  const teams={};
@@ -144,16 +181,18 @@ function buildRecord(sum,c){
  });
  const hasPlays=!!(sum.plays&&sum.plays.length);
  if(hasPlays)possessionTime(sum.plays,c,teams);
+ let periods=null,timeline=null;
+ if(withDetail&&hasPlays){const d=playDetail(sum.plays,c,teams,comp);periods=d.periods;timeline=d.timeline}
  let ou=null;(sum.pickcenter||[]).forEach(p=>{if(ou==null&&p.overUnder)ou=+p.overUnder});
  const st=status.type||{};
- return{teams,order,state:st.state,completed:!!st.completed,detail:st.shortDetail||'',elapsed:elapsedMin(c,status),date:comp.date,ou,hasPlays};
+ return{teams,order,state:st.state,completed:!!st.completed,detail:st.shortDetail||'',elapsed:elapsedMin(c,status),date:comp.date,ou,hasPlays,periods,timeline};
 }
 
 async function record(lg,id,final){
  const k=VER+'_'+lg+'_'+id;
  if(final){const hit=memo[k]||cacheGet(k);if(hit)return hit}
  const js=await getJSON(BASE+CFG[lg].path+'/summary?event='+id);
- const rec=buildRecord(js,CFG[lg]);
+ const rec=buildRecord(js,CFG[lg],!final);
  if(rec.completed){memo[k]=rec;cacheSet(k,rec)}
  return rec;
 }
@@ -335,54 +374,150 @@ function saveLines(){
  render();
 }
 
-function statTable(G,P,c){
+function combine(x,y,c){
+ if(!x||!y)return null;
+ const sum=k=>x[k]+y[k];
+ const r={pts:sum('pts'),fga:sum('fga'),tpa:sum('tpa'),fta:sum('fta'),orb:sum('orb'),tov:sum('tov'),
+  poss:(x.poss+y.poss)/2,spp:x.spp&&y.spp?(x.spp+y.spp)/2:null};
+ const R=x.raw&&y.raw?{fgm:x.raw.fgm+y.raw.fgm,fga:x.raw.fga+y.raw.fga,tpm:x.raw.tpm+y.raw.tpm,tpa:x.raw.tpa+y.raw.tpa,ftm:x.raw.ftm+y.raw.ftm,fta:x.raw.fta+y.raw.fta,orb:x.raw.orb+y.raw.orb,tov:x.raw.tov+y.raw.tov,pts:x.raw.pts+y.raw.pts}:null;
+ if(R){r.fg=R.fga?R.fgm/R.fga:null;r.tp=R.tpa?R.tpm/R.tpa:null;r.ft=R.fta?R.ftm/R.fta:null}
+ r.ppp=r.poss?r.pts/(2*r.poss):null;
+ r.orbp=null;r.tovp=r.poss?r.tov/(2*r.poss):null;
+ return r;
+}
+
+const ROWS=[
+ ['Points',x=>x.pts,f1,4,false],
+ ['FGA',x=>x.fga,f1,4,false],
+ ['FG%',x=>x.fg,pct,0.03,false],
+ ['3PA',x=>x.tpa,f1,3,false],
+ ['3P%',x=>x.tp,pct,0.04,false],
+ ['FTA',x=>x.fta,f1,3,false],
+ ['FT%',x=>x.ft,pct,0.06,false],
+ ['Off. rebounds',x=>x.orb,f1,2.5,false],
+ ['Off. reb %',x=>x.orbp,pct,0.05,false],
+ ['Turnovers',x=>x.tov,f1,2.5,false],
+ ['Turnover %',x=>x.tovp,pct,0.03,false],
+ ['Possessions',x=>x.poss,f1,2.5,false],
+ ['Points / poss',x=>x.ppp,f2,0.05,false],
+ ['Sec / possession',x=>x.spp,f1,1,true]
+];
+
+function avgTable(G,c){
  const live=G.live,[a,b]=live.order,A=live.teams[a],B=live.teams[b];
  const hA=G.hist[a],hB=G.hist[b];
- const started=live.state!=='pre'&&live.elapsed>0;
- const lA=started?P.lA:null,lB=started?P.lB:null;
- const rows=[
-  ['Points',x=>x.pts,f1,4,false,r=>r.pts],
-  ['FGA',x=>x.fga,f1,4,false,r=>r.fgm+'-'+r.fga],
-  ['FG%',x=>x.fg,pct,0.03,false],
-  ['3PA',x=>x.tpa,f1,3,false,r=>r.tpm+'-'+r.tpa],
-  ['3P%',x=>x.tp,pct,0.04,false],
-  ['FTA',x=>x.fta,f1,3,false,r=>r.ftm+'-'+r.fta],
-  ['FT%',x=>x.ft,pct,0.06,false],
-  ['Off. rebounds',x=>x.orb,f1,2.5,false,r=>r.orb],
-  ['Off. reb %',x=>x.orbp,pct,0.05,false],
-  ['Turnovers',x=>x.tov,f1,2.5,false,r=>r.tov],
-  ['Turnover %',x=>x.tovp,pct,0.03,false],
-  ['Possessions',x=>x.poss,f1,2.5,false],
-  ['Points / poss',x=>x.ppp,f2,0.05,false],
-  ['Sec / possession',x=>x.spp,f1,1,true]
- ];
- const cell=(v,base,fmt,tol,inv,raw)=>'<td class="'+cls(v,base,tol,inv)+'">'+fmt(v)+(raw!=null?'<small>'+raw+'</small>':'')+'</td>';
- const l10cell=(h,get,fmt)=>{if(!h||!h.l10)return'<td class="sep">–</td>';const v=get(h.l10),v3=h.l3?get(h.l3):null;return'<td class="sep">'+fmt(v)+(v3!=null?'<small>L3 '+fmt(v3)+'</small>':'')+'</td>'};
- let html='<div class="tblwrap"><table><tr><th rowspan="2">Per game</th><th class="grp" colspan="2">'+A.name+'</th><th class="grp" colspan="2">'+B.name+'</th></tr>'+
-  '<tr><th class="sep">L'+(hA?hA.n:0)+'</th><th>Live</th><th class="sep">L'+(hB?hB.n:0)+'</th><th>Live</th></tr>';
- rows.forEach(r=>{
-  const[lab,get,fmt,tol,inv,rawf]=r;
-  html+='<tr><td>'+lab+'</td>'+l10cell(hA,get,fmt)+
-   (lA?cell(get(lA),hA&&hA.l10?get(hA.l10):null,fmt,tol,inv,rawf?rawf(A):null):'<td>–</td>')+
-   l10cell(hB,get,fmt)+
-   (lB?cell(get(lB),hB&&hB.l10?get(hB.l10):null,fmt,tol,inv,rawf?rawf(B):null):'<td>–</td>')+'</tr>';
+ const cA=hA&&hA.l10,cB=hB&&hB.l10,cC=combine(cA,cB,c);
+ const c3=combine(hA&&hA.l3,hB&&hB.l3,c);
+ const cellH=(v,v3,fmt)=>'<td class="sep">'+fmt(v)+(v3!=null?'<small>L3 '+fmt(v3)+'</small>':'')+'</td>';
+ let html='<div class="layer"><h3>1 · Team averages, last '+NGAMES+' games</h3><div class="tblwrap"><table><tr><th>Per game</th><th class="sep">'+A.name+' (L'+(hA?hA.n:0)+')</th><th class="sep">'+B.name+' (L'+(hB?hB.n:0)+')</th><th class="sep">Combined</th></tr>';
+ ROWS.forEach(([lab,get,fmt])=>{
+  const g=(o)=>o?get(o):null;
+  html+='<tr><td>'+lab+'</td>'+cellH(g(cA),g(hA&&hA.l3),fmt)+cellH(g(cB),g(hB&&hB.l3),fmt)+cellH(g(cC),g(c3),fmt)+'</tr>';
  });
- html+='</table></div><p class="note">Live counts are shown on pace for a full game, with tonight\'s actual numbers underneath. Green/red = above/below that team\'s last-10 average (for seconds per possession, green = faster). L3 = last 3 games.</p>';
+ html+='<tr><td>Points allowed</td>'+cellH(cA?cA.opts:null,hA&&hA.l3?hA.l3.opts:null,f1)+cellH(cB?cB.opts:null,hB&&hB.l3?hB.l3.opts:null,f1)+'<td class="sep">–</td></tr>';
+ html+='</table></div><p class="note">L3 = last 3 games. Combined = both teams added together (percentages and per-possession numbers are for both teams together).</p></div>';
  return html;
 }
 
-function gameTable(G,P,c){
- const live=G.live,[a,b]=live.order;
- const hA=G.hist[a]&&G.hist[a].l10,hB=G.hist[b]&&G.hist[b].l10;
- const started=live.state!=='pre'&&live.elapsed>0;
- const expPts=hA&&hB?((hA.pts+hB.opts)/2+(hB.pts+hA.opts)/2):null;
- let html='<h3>Game totals</h3><div class="tblwrap"><table><tr><th>Game</th><th class="sep">Expected (L10)</th><th>Live pace</th><th>Vegas</th></tr>';
- html+='<tr><td>Total points</td><td class="sep">'+f1(expPts)+'</td><td>'+(started?f1(P.asIs):'–')+'<small>'+(started?P.pts+' so far':'')+'</small></td><td>'+(P.L||'–')+'</td></tr>';
- html+='<tr><td>Possessions</td><td class="sep">'+f1(P.expPace)+'</td><td class="'+cls(P.livePace,P.expPace,2)+'">'+(started?f1(P.livePace):'–')+'</td><td>–</td></tr>';
- html+='<tr><td>1st half</td><td class="sep">–</td><td>–</td><td>'+(G.L1||(P.L?f1(P.L1)+'*':'–'))+'</td></tr>';
- html+='</table></div>';
- if(!G.L1&&P.L)html+='<p class="note">* 1st-half total not entered; assumed '+Math.round(c.h1share*100)+'% of the game total.</p>';
+function boxTable(G,P,c){
+ const live=G.live,[a,b]=live.order,A=live.teams[a],B=live.teams[b];
+ if(live.state==='pre'||live.elapsed<=0)return'<div class="layer"><h3>2 · Tonight</h3><p class="note">The box score appears once the game starts.</p></div>';
+ const lA=P.lA,lB=P.lB,hA=P.hA,hB=P.hB;
+ const T={pts:A.pts+B.pts,fgm:A.fgm+B.fgm,fga:A.fga+B.fga,tpm:A.tpm+B.tpm,tpa:A.tpa+B.tpa,ftm:A.ftm+B.ftm,fta:A.fta+B.fta,orb:A.orb+B.orb,drb:A.drb+B.drb,tov:A.tov+B.tov,pf:A.pf+B.pf};
+ const sh=(m,a)=>m+'-'+a+'<small>'+(a?(m/a*100).toFixed(1)+'%':'–')+'</small>';
+ const pc=(v,base,tol,inv)=>cls(v,base,tol,inv);
+ const f=P.el/c.total;
+ const pace=(v)=>f>0?f1(v/f):'–';
+ const row=(lab,va,vb,vt,extra)=>'<tr><td>'+lab+'</td><td class="sep">'+va+'</td><td class="sep">'+vb+'</td><td class="sep">'+vt+'</td>'+(extra||'')+'</tr>';
+ let html='<div class="layer"><h3>2 · Tonight · box score ('+f1(P.el)+' of '+c.total+' min)</h3><div class="tblwrap"><table><tr><th>So far</th><th class="sep">'+A.name+'</th><th class="sep">'+B.name+'</th><th class="sep">Game total</th></tr>';
+ html+=row('Points',A.pts+'<small>pace '+pace(A.pts)+'</small>',B.pts+'<small>pace '+pace(B.pts)+'</small>',T.pts+'<small>pace '+pace(T.pts)+'</small>');
+ html+=row('Field goals',sh(A.fgm,A.fga),sh(B.fgm,B.fga),sh(T.fgm,T.fga));
+ html+=row('3-pointers',sh(A.tpm,A.tpa),sh(B.tpm,B.tpa),sh(T.tpm,T.tpa));
+ html+=row('Free throws',sh(A.ftm,A.fta),sh(B.ftm,B.fta),sh(T.ftm,T.fta));
+ html+=row('Off. rebounds',A.orb,B.orb,T.orb);
+ html+=row('Def. rebounds',A.drb,B.drb,T.drb);
+ html+=row('Turnovers',A.tov+'<small>pace '+pace(A.tov)+'</small>',B.tov+'<small>pace '+pace(B.tov)+'</small>',T.tov+'<small>pace '+pace(T.tov)+'</small>');
+ html+=row('Fouls',A.pf,B.pf,T.pf);
+ html+=row('Possessions',f1(lA.pm)+'<small>pace '+pace(lA.pm)+'</small>',f1(lB.pm)+'<small>pace '+pace(lB.pm)+'</small>',f1((lA.pm+lB.pm)/2)+'<small>pace '+pace((lA.pm+lB.pm)/2)+'</small>');
+ html+=row('Points / poss',f2(lA.ppp),f2(lB.ppp),f2(T.pts/(lA.pm+lB.pm)));
+ html+=row('Sec / possession',f1(lA.spp),f1(lB.spp),lA.spp&&lB.spp?f1((lA.spp+lB.spp)/2):'–');
+ html+='</table></div><p class="note">"pace" = where that number finishes if tonight\'s rate holds for the full game.</p></div>';
+ html+=vsTable(G,P,c);
  return html;
+}
+
+function vsTable(G,P,c){
+ const live=G.live,[a,b]=live.order,A=live.teams[a],B=live.teams[b];
+ const lA=P.lA,lB=P.lB,hA=P.hA,hB=P.hB;
+ if(!hA||!hB)return'';
+ const cell=(v,base,fmt,tol,inv)=>'<td class="sep '+cls(v,base,tol,inv)+'">'+fmt(v)+'<small>norm '+fmt(base)+'</small></td>';
+ let html='<h3>Tonight vs normal (per full game)</h3><div class="tblwrap"><table><tr><th>Stat</th><th class="sep">'+A.name+'</th><th class="sep">'+B.name+'</th></tr>';
+ ROWS.forEach(([lab,get,fmt,tol,inv])=>{
+  html+='<tr><td>'+lab+'</td>'+cell(get(lA),get(hA),fmt,tol,inv)+cell(get(lB),get(hB),fmt,tol,inv)+'</tr>';
+ });
+ html+='</table></div><p class="note">Green/red = above/below that team\'s last-10 average (for seconds per possession, green = faster).</p>';
+ return html;
+}
+
+function periodTable(G,c){
+ const live=G.live,[a,b]=live.order,A=live.teams[a],B=live.teams[b];
+ const per=live.periods;
+ if(!per||live.state==='pre')return'';
+ const keys=Object.keys(per).map(Number).sort((x,y)=>x-y);
+ const pname=n=>n<=c.periods?(c.periods===2?(n===1?'1st half':'2nd half'):'Q'+n):'OT'+(n-c.periods);
+ let cum=0;
+ let html='<div class="layer"><h3>3 · Running totals by '+(c.periods===2?'half':'quarter')+'</h3><div class="tblwrap"><table><tr><th>Period</th><th class="sep">'+A.name+'</th><th class="sep">'+B.name+'</th><th class="sep">Total</th><th>Running</th><th class="sep">Poss</th><th>FGA</th><th>3PA</th><th>FTA</th><th>TO</th></tr>';
+ keys.forEach(n=>{
+  const x=per[n][a],y=per[n][b];
+  const tot=x.pts+y.pts;cum+=tot;
+  const ps=(poss(x,c)+poss(y,c))/2;
+  html+='<tr><td>'+pname(n)+'</td><td class="sep">'+x.pts+'</td><td class="sep">'+y.pts+'</td><td class="sep"><b>'+tot+'</b></td><td>'+cum+'</td><td class="sep">'+f1(ps)+'</td><td>'+(x.fga+y.fga)+'</td><td>'+(x.tpa+y.tpa)+'</td><td>'+(x.fta+y.fta)+'</td><td>'+(x.tov+y.tov)+'</td></tr>';
+ });
+ html+='</table></div><p class="note">Shot and turnover counts here come from ESPN\'s play-by-play, so they can differ by one or two from the box score.</p></div>';
+ return html;
+}
+
+function svgChart(series,xMax,yMax,yLabel,marks){
+ const W=600,H=230,L=38,R=10,T=10,B=26;
+ const x=v=>L+(W-L-R)*v/xMax,y=v=>H-B-(H-T-B)*v/yMax;
+ let g='';
+ const step=yMax>120?40:yMax>60?20:10;
+ for(let v=0;v<=yMax;v+=step)g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#eee"/><text x="'+(L-4)+'" y="'+(y(v)+4)+'" font-size="11" text-anchor="end" fill="#777">'+v+'</text>';
+ (marks||[]).forEach(m=>{g+='<line x1="'+x(m.x)+'" x2="'+x(m.x)+'" y1="'+T+'" y2="'+(H-B)+'" stroke="#ccc" stroke-dasharray="3 3"/><text x="'+(x(m.x)+3)+'" y="'+(T+10)+'" font-size="11" fill="#777">'+m.label+'</text>'});
+ g+='<text x="'+L+'" y="'+(H-6)+'" font-size="11" fill="#777">0</text><text x="'+(W-R)+'" y="'+(H-6)+'" font-size="11" fill="#777" text-anchor="end">'+xMax+' min</text>';
+ series.forEach(s=>{
+  if(!s.pts.length)return;
+  const d=s.pts.map((p,i)=>(i?'L':'M')+x(p[0]).toFixed(1)+' '+y(p[1]).toFixed(1)).join(' ');
+  g+='<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="'+(s.w||2)+'"'+(s.dash?' stroke-dasharray="'+s.dash+'"':'')+'/>';
+ });
+ return'<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+yLabel+'">'+g+'</svg>';
+}
+
+function charts(G,P,c){
+ const live=G.live,tl=live.timeline;
+ if(!tl||tl.length<2||live.state==='pre')return'';
+ const half=c.total/2;
+ const vegas=P.L?[[0,0],[half,P.L1],[c.total,P.L]]:[];
+ const[a,b]=live.order,hA=G.hist[a]&&G.hist[a].l10,hB=G.hist[b]&&G.hist[b].l10;
+ const exp=hA&&hB?((hA.pts+hB.opts)/2+(hB.pts+hA.opts)/2):null;
+ const l10=exp?[[0,0],[c.total,exp]]:[];
+ const actual=tl.map(p=>[Math.min(p.t,c.total),p.pts]);
+ const yMax=Math.ceil(Math.max(P.L||0,exp||0,P.proj||0,...actual.map(p=>p[1]))/20)*20+10;
+ const marks=[{x:half,label:'Half'}];
+ if(c.periods===4){marks.push({x:12,label:'Q1'},{x:36,label:'Q3'})}
+ const proj=P.L&&live.state==='in'?[[P.el,P.pts],[c.total,P.proj]]:[];
+ let html='<div class="layer"><h3>4 · Charts</h3><div class="note">Total points so far vs the pace each line implies</div>';
+ html+=svgChart([{pts:vegas,color:'#9aa5b1',dash:'6 4'},{pts:l10,color:'#c08a2b',dash:'2 4'},{pts:proj,color:'#2e7d32',dash:'5 3'},{pts:actual,color:'#1f3a5f',w:2.5}],c.total,yMax,'Total points over time',marks);
+ html+='<div class="legend"><span style="--c:#1f3a5f">Actual total</span><span style="--c:#9aa5b1">Vegas pace (1st half + full game)</span><span style="--c:#c08a2b">Teams\' L10 expected</span><span style="--c:#2e7d32">Model projection</span></div>';
+ if(hA&&hB){
+  const expPoss=[[0,0],[c.total,(hA.pace+hB.pace)/2]];
+  const ap=tl.map(p=>[Math.min(p.t,c.total),p.poss]);
+  const yM=Math.ceil(Math.max(expPoss[1][1],...ap.map(p=>p[1]))/10)*10+5;
+  html+='<div class="note">Possessions so far vs the two teams\' normal pace</div>';
+  html+=svgChart([{pts:expPoss,color:'#c08a2b',dash:'2 4'},{pts:ap,color:'#1f3a5f',w:2.5}],c.total,yM,'Possessions over time',marks);
+  html+='<div class="legend"><span style="--c:#1f3a5f">Actual possessions</span><span style="--c:#c08a2b">L10 normal pace</span></div>';
+ }
+ return html+'</div>';
 }
 
 function paceBox(G,P){
@@ -401,7 +536,7 @@ function projBlock(G,P,c){
  const live=G.live;
  if(!P.L)return'<p class="note">Enter the pregame total (and 1st-half total) to get a projection.</p>';
  if(live.state==='pre'||live.elapsed<=0)return'<p class="note">Game hasn\'t started. The projection appears once it\'s live.</p>';
- let html='<h3>Projection</h3><div class="cards">'+
+ let html='<div class="cards">'+
   '<div class="card"><div class="l">Model: points left</div><div class="v">'+f1(P.modelRem)+'</div><div class="s">final '+f1(P.proj)+'</div></div>'+
   '<div class="card"><div class="l">Book: points left</div><div class="v">'+(P.line?f1(P.bookRem):'–')+'</div><div class="s">'+(P.line?'live line '+P.line:'enter the live line')+'</div></div>'+
   '<div class="card"><div class="l">Vegas pregame: points left</div><div class="v">'+f1(P.vegasRem)+'</div><div class="s">pace adj '+f2(P.paceAdj)+'</div></div>'+
@@ -437,7 +572,7 @@ function render(){
  const inp=(k,lab,ph)=>'<div><label>'+lab+'</label><input id="i_'+k+'" inputmode="decimal" placeholder="'+(ph||'')+'" value="'+(G[k]||'')+'" onchange="saveLines()"></div>';
  html+='<div class="lines">'+inp('L','Pregame total')+inp('L1','1st-half total',G.L?f1(G.L*c.h1share):'')+inp('line','Live total')+inp('h2','2nd-half line')+inp('price','Price','-110')+'</div>';
  html+='<div class="row"><button onclick="refreshLive()">Refresh live</button><span class="note">Auto-refreshes every 45s while live.</span></div>';
- html+=statTable(G,P,c)+paceBox(G,P)+gameTable(G,P,c)+projBlock(G,P,c);
+ html+=avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div>';
  const active=document.activeElement&&document.activeElement.id;
  document.getElementById('game').innerHTML=html;
  if(active&&document.getElementById(active))document.getElementById(active).focus();
