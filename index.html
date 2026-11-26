@@ -50,6 +50,8 @@ h3{font-size:14px;margin:14px 0 4px}
 .legend{font-size:12px;color:#555;display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px}
 .legend span:before{content:"";display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:middle;background:var(--c)}
 .layer{border-top:3px solid #1f3a5f;margin-top:16px;padding-top:4px}
+.dkbar{background:#f4f6f9;border-radius:8px;padding:7px 10px;font-size:13px;margin:-4px 0 10px}
+.dkbar b{font-size:15px}
 .pacebox{border-left:3px solid #1f3a5f;padding:6px 10px;margin:6px 0;font-size:14px;background:#f8fafc}
 @media(max-width:520px){.lines{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
@@ -57,7 +59,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v3 · data from ESPN</div>
+<div class="sub">Over/under model · v4 · data from ESPN · lines from DraftKings</div>
 </header>
 <main>
 <div class="row">
@@ -184,8 +186,17 @@ function buildRecord(sum,c,withDetail){
  let periods=null,timeline=null;
  if(withDetail&&hasPlays){const d=playDetail(sum.plays,c,teams,comp);periods=d.periods;timeline=d.timeline}
  let ou=null;(sum.pickcenter||[]).forEach(p=>{if(ou==null&&p.overUnder)ou=+p.overUnder});
+ let dk=null;const pc=(sum.pickcenter||[]).find(p=>p.total)||null;
+ if(pc){
+  const tl=pc.total,ln=v=>{const n=parseFloat(String(v||'').replace(/^[ou]/i,''));return isNaN(n)?null:n};
+  const od=v=>{if(v==null)return null;if(/even/i.test(String(v)))return 100;const n=parseFloat(v);return isNaN(n)?null:n};
+  const g=(side,k)=>(tl[side]&&tl[side][k])||{};
+  dk={prov:(pc.provider&&pc.provider.name)||'DraftKings',open:ln(g('over','open').line),close:ln(g('over','close').line),live:ln(g('over','live').line),
+   overOdds:od(g('over','live').odds)||od(g('over','close').odds)||od(pc.overOdds),underOdds:od(g('under','live').odds)||od(g('under','close').odds)||od(pc.underOdds)};
+  if(!dk.close&&pc.overUnder)dk.close=+pc.overUnder;
+ }
  const st=status.type||{};
- return{teams,order,state:st.state,completed:!!st.completed,detail:st.shortDetail||'',elapsed:elapsedMin(c,status),date:comp.date,ou,hasPlays,periods,timeline};
+ return{teams,order,state:st.state,completed:!!st.completed,detail:st.shortDetail||'',elapsed:elapsedMin(c,status),date:comp.date,ou,dk,hasPlays,periods,timeline};
 }
 
 async function record(lg,id,final){
@@ -265,7 +276,10 @@ function breakEven(price){const p=+price;if(!p)return 110/210;return p<0?(-p)/(-
 
 function project(G){
  const c=CFG[G.lg],live=G.live;
- const L=+G.L||0,L1=+G.L1||L*c.h1share,line=+G.line||0,h2=+G.h2||0;
+ const dk=live.dk||{};
+ const L=+G.L||0,L1=+G.L1||L*c.h1share,h2=+G.h2||0;
+ const lineAuto=!G.line&&live.state==='in'&&dk.live?dk.live:0;
+ const line=+G.line||lineAuto;
  const el=Math.min(live.elapsed,c.total),f=el/c.total;
  const[a,b]=live.order,A=live.teams[a],B=live.teams[b];
  const pts=A.pts+B.pts;
@@ -287,8 +301,10 @@ function project(G){
  const proj=pts+modelRem;
  const asIs=el?pts/el*c.total:0;
  const sdRem=c.sd*Math.sqrt(Math.max(1-f,0.0001));
- const out={L,L1,line,h2,el,f,pts,w,method,paceAdj,expPace,livePace,sA,sB,lA,lB,hA,hB,vegasRem,modelRem,proj,asIs,sdRem,be:breakEven(G.price)};
- if(line){out.bookRem=line-pts;out.edge=proj-line;out.pOver=1-phi((line-proj)/sdRem)}
+ const out={L,L1,line,lineAuto:!!lineAuto,h2,el,f,pts,w,method,paceAdj,expPace,livePace,sA,sB,lA,lB,hA,hB,vegasRem,modelRem,proj,asIs,sdRem};
+ out.price=G.price||'-110';out.be=breakEven(out.price);
+ if(line){out.bookRem=line-pts;out.edge=proj-line;out.pOver=1-phi((line-proj)/sdRem);
+  if(!G.price&&lineAuto){const pr=out.edge>0?dk.overOdds:dk.underOdds;if(pr){out.price=(pr>0?'+':'')+pr;out.be=breakEven(pr)}}}
  if(h2&&el<=c.total/2+0.01){
   const vegas2H=L-L1;
   const h1rem=el<c.total/2?L1*(c.total/2-el)/(c.total/2):0;
@@ -344,7 +360,8 @@ async function openGame(id){
  try{
   const live=await record(league,id,false);
   const saved=cacheGet('lines_'+id)||{};
-  cur={lg:league,id,live,hist:{},L:saved.L||live.ou||'',L1:saved.L1||'',line:saved.line||'',h2:saved.h2||'',price:saved.price||'-110',log:saved.log||[]};
+  cur={lg:league,id,live,hist:{},L:saved.L||(live.dk&&live.dk.close)||live.ou||'',L1:saved.L1||'',line:saved.line||'',h2:saved.h2||'',price:saved.price&&saved.price!=='-110'?saved.price:'',log:saved.log||[]};
+  logDK();
   const hs=await Promise.all(live.order.map(t=>teamHistory(league,t,id)));
   live.order.forEach((t,i)=>{cur.hist[t]={l10:agg(hs[i],c),l3:agg(hs[i].slice(-3),c),n:hs[i].length}});
   render();
@@ -358,9 +375,20 @@ async function refreshLive(){
  if(!cur)return;
  try{
   cur.live=await record(cur.lg,cur.id,false);
+  logDK();
   render();
   if(cur.live.state!=='in'&&timer){clearInterval(timer);timer=null}
  }catch(e){}
+}
+
+function logDK(){
+ const lv=cur.live,d=lv.dk;
+ if(lv.state!=='in'||!d||!d.live)return;
+ const last=cur.log.filter(x=>x.src==='DK').slice(-1)[0];
+ if(last&&+last.line===d.live)return;
+ const[a,b]=lv.order;
+ cur.log.push({t:f1(lv.elapsed),score:lv.teams[a].pts+lv.teams[b].pts,line:d.live,src:'DK',odds:(d.overOdds||'')+'/'+(d.underOdds||'')});
+ cacheSet('lines_'+cur.id,{L:cur.L,L1:cur.L1,line:cur.line,h2:cur.h2,price:cur.price,log:cur.log});
 }
 
 function saveLines(){
@@ -368,7 +396,7 @@ function saveLines(){
  ['L','L1','line','h2','price'].forEach(k=>{cur[k]=document.getElementById('i_'+k).value});
  if(cur.line&&cur.line!==prevLine&&cur.live.state==='in'){
   const lv=cur.live,[a,b]=lv.order;
-  cur.log.push({t:f1(lv.elapsed),score:lv.teams[a].pts+lv.teams[b].pts,line:cur.line});
+  cur.log.push({t:f1(lv.elapsed),score:lv.teams[a].pts+lv.teams[b].pts,line:cur.line,src:'you',odds:cur.price||''});
  }
  cacheSet('lines_'+cur.id,{L:cur.L,L1:cur.L1,line:cur.line,h2:cur.h2,price:cur.price,log:cur.log});
  render();
@@ -538,13 +566,13 @@ function projBlock(G,P,c){
  if(live.state==='pre'||live.elapsed<=0)return'<p class="note">Game hasn\'t started. The projection appears once it\'s live.</p>';
  let html='<div class="cards">'+
   '<div class="card"><div class="l">Model: points left</div><div class="v">'+f1(P.modelRem)+'</div><div class="s">final '+f1(P.proj)+'</div></div>'+
-  '<div class="card"><div class="l">Book: points left</div><div class="v">'+(P.line?f1(P.bookRem):'–')+'</div><div class="s">'+(P.line?'live line '+P.line:'enter the live line')+'</div></div>'+
+  '<div class="card"><div class="l">Book: points left</div><div class="v">'+(P.line?f1(P.bookRem):'–')+'</div><div class="s">'+(P.line?(P.lineAuto?'DraftKings live ':'live line ')+P.line:'no live line yet')+'</div></div>'+
   '<div class="card"><div class="l">Vegas pregame: points left</div><div class="v">'+f1(P.vegasRem)+'</div><div class="s">pace adj '+f2(P.paceAdj)+'</div></div>'+
   '<div class="card"><div class="l">As-is pace (no regression)</div><div class="v">'+f1(P.asIs)+'</div><div class="s">'+P.pts+' scored</div></div></div>';
  if(P.line){
   const side=P.edge>0?'over':'under',pSide=P.edge>0?P.pOver:1-P.pOver;
   const good=pSide>P.be+0.03;
-  html+='<div class="verdict '+(good?side:'')+'">Edge: <b>'+sgn(P.edge)+'</b> → leans '+side+' '+P.line+'. Chance of '+side+': <b>'+Math.round(pSide*100)+'%</b> vs break-even '+(P.be*100).toFixed(1)+'% at '+(G.price||'-110')+'. Likely final range '+f1(P.proj-P.sdRem)+'–'+f1(P.proj+P.sdRem)+'.</div>';
+  html+='<div class="verdict '+(good?side:'')+'">Edge: <b>'+sgn(P.edge)+'</b> → leans '+side+' '+P.line+'. Chance of '+side+': <b>'+Math.round(pSide*100)+'%</b> vs break-even '+(P.be*100).toFixed(1)+'% at '+P.price+(P.lineAuto?' (DraftKings)':'')+'. Likely final range '+f1(P.proj-P.sdRem)+'–'+f1(P.proj+P.sdRem)+'.</div>';
  }else html+='<p class="note">Enter the live line to see the edge and the chance of over/under.</p>';
  if(P.model2H!=null){
   const s2=P.h2edge>0?'over':'under',p2=P.h2edge>0?P.p2Over:1-P.p2Over;
@@ -558,8 +586,8 @@ function projBlock(G,P,c){
   if((lA.tovp>hA.tovp*1.5&&lA.tovp>0.15)||(lB.tovp>hB.tovp*1.5&&lB.tovp>0.15))html+='<p class="note"><b>Turnover check:</b> a team is turning it over at 1.5× its normal rate or more.'+(G.lg==='ncaa'?' In college, watch for that team slowing down after halftime.':'')+'</p>';
  }
  if(G.log.length){
-  html+='<h3>Live line history</h3><div class="tblwrap"><table><tr><th>Min played</th><th>Score total</th><th>Line</th><th>Book pts left</th></tr>'+
-   G.log.map(x=>'<tr><td>'+x.t+'</td><td>'+x.score+'</td><td>'+x.line+'</td><td>'+f1(x.line-x.score)+'</td></tr>').join('')+'</table></div>';
+  html+='<h3>Live line history</h3><div class="tblwrap"><table><tr><th>Min played</th><th>Score total</th><th>Line</th><th>Book pts left</th><th>Price o/u</th><th>Source</th></tr>'+
+   G.log.map(x=>'<tr><td>'+x.t+'</td><td>'+x.score+'</td><td>'+x.line+'</td><td>'+f1(x.line-x.score)+'</td><td>'+(x.odds||'')+'</td><td>'+(x.src==='DK'?'DraftKings':'You')+'</td></tr>').join('')+'</table></div>';
  }
  return html;
 }
@@ -570,7 +598,12 @@ function render(){
  const P=project(G);
  let html='<h2>'+away.name+' '+(pre?'':away.pts)+' @ '+home.name+' '+(pre?'':home.pts)+' <span class="note">· '+live.detail+'</span></h2>';
  const inp=(k,lab,ph)=>'<div><label>'+lab+'</label><input id="i_'+k+'" inputmode="decimal" placeholder="'+(ph||'')+'" value="'+(G[k]||'')+'" onchange="saveLines()"></div>';
- html+='<div class="lines">'+inp('L','Pregame total')+inp('L1','1st-half total',G.L?f1(G.L*c.h1share):'')+inp('line','Live total')+inp('h2','2nd-half line')+inp('price','Price','-110')+'</div>';
+ const dk=live.dk;
+ html+='<div class="lines">'+inp('L','Pregame total')+inp('L1','1st-half total',G.L?f1(G.L*c.h1share):'')+inp('line','Live total',dk&&dk.live&&live.state==='in'?'DK '+dk.live:'')+inp('h2','2nd-half line')+inp('price','Price',dk&&dk.overOdds&&live.state==='in'?'DK':'-110')+'</div>';
+ if(dk){
+  const o=v=>v==null?'–':(v>0?'+'+v:v);
+  html+='<div class="dkbar">'+dk.prov+': '+(live.state==='in'&&dk.live?'live <b>'+dk.live+'</b> (over '+o(dk.overOdds)+' / under '+o(dk.underOdds)+') · ':'')+'pregame close '+(dk.close||'–')+' · open '+(dk.open||'–')+(live.state==='in'?' · updates every 45s':'')+'<br><span class="note">Live total and price fill in from DraftKings automatically. Type your own to override; clear the box to go back to DraftKings. Confirm the line in the DraftKings app before betting.</span></div>';
+ }
  html+='<div class="row"><button onclick="refreshLive()">Refresh live</button><span class="note">Auto-refreshes every 45s while live.</span></div>';
  html+=avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div>';
  const active=document.activeElement&&document.activeElement.id;
