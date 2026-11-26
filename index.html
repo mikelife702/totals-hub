@@ -112,7 +112,7 @@ function elapsedMin(c,status){
  const st=status.type||{};
  if(st.state==='pre')return 0;
  const p=status.period||1;
- const clk=(status.clock!=null)?status.clock/60:0;
+ const dc=String(status.displayClock||'0'),clk=(status.clock!=null)?status.clock/60:(dc.includes(':')?(+dc.split(':')[0])+(+dc.split(':')[1])/60:(+dc||0)/60);
  if(st.state==='post'||st.completed){
   return p<=c.periods?c.total:c.total+(p-c.periods)*c.ot;
  }
