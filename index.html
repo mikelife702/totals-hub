@@ -72,6 +72,9 @@ h3{font-size:14px;margin:14px 0 4px}
 .vbox .s{font-size:11px;color:#555}
 .warn{background:#fff4e5;border:1px solid #f0b46a;border-radius:8px;padding:7px 10px;font-size:13px;margin:0 0 10px}
 @media(max-width:520px){.vbox{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pre{border:1px solid #dfe4ea;border-radius:10px;padding:8px 12px;margin:0 0 12px}
+.pre table{margin:4px 0 6px}
+.pre .big{font-size:18px;font-weight:600}
 .pacebox{border-left:3px solid #1f3a5f;padding:6px 10px;margin:6px 0;font-size:14px;background:#f8fafc}
 @media(max-width:520px){.lines{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
@@ -79,7 +82,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v7 · data from ESPN · lines from DraftKings</div>
+<div class="sub">Over/under model · v8 · data from ESPN · lines from DraftKings</div>
 </header>
 <main>
 <div class="row">
@@ -624,6 +627,51 @@ function projBlock(G,P,c){
  return html;
 }
 
+const LGC={};
+function leagueAvg(lg,hA,hB,c){
+ if(LGC[lg]&&LGC[lg].n>=30)return LGC[lg];
+ let pts=0,ps=0,gp=0,mins=0,n=0;
+ try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(!k||k.indexOf(VER+'_'+lg+'_')!==0)continue;
+  const r=JSON.parse(localStorage.getItem(k));if(!r||!r.completed)continue;const t=r.order.map(id=>r.teams[id]);
+  if(t.length!==2||!t[0].fga||!t[1].fga)continue;const p0=poss(t[0],c),p1=poss(t[1],c);
+  pts+=t[0].pts+t[1].pts;ps+=p0+p1;gp+=(p0+p1)/2;mins+=r.elapsed||c.total;n++}}catch(e){}
+ if(n>=30){LGC[lg]={ppp:pts/ps,pace:gp/mins*c.total,n,src:n+' games loaded so far'};return LGC[lg]}
+ if(!hA||!hB)return null;
+ const pg=h=>h.myPoss/h.n;
+ return{ppp:(hA.pts+hA.opts+hB.pts+hB.opts)/(2*pg(hA)+2*pg(hB)),pace:(hA.pace+hB.pace)/2,n,src:'these two teams\' games only (improves as you load more games)'};
+}
+
+function pregame(G){
+ const c=CFG[G.lg],live=G.live,[a,b]=live.order;
+ const hA=G.hist[a]&&G.hist[a].l10,hB=G.hist[b]&&G.hist[b].l10;
+ if(!hA||!hB||!hA.ppp||!hB.ppp||!hA.oppp||!hB.oppp)return null;
+ const lg=leagueAvg(G.lg,hA,hB,c);if(!lg)return null;
+ const pace=lg.n>=30?hA.pace*hB.pace/lg.pace:(hA.pace+hB.pace)/2;
+ const adjA=hA.ppp*hB.oppp/lg.ppp,adjB=hB.ppp*hA.oppp/lg.ppp;
+ const total=pace*(adjA+adjB);
+ const L=+G.L||0,L1=+G.L1||0;
+ const share=L&&L1?L1/L:c.h1share;
+ return{pace,adjA,adjB,total,h1:total*share,share,lg,ptsA:pace*adjA,ptsB:pace*adjB,hA,hB,L,L1:L1||(L?L*c.h1share:0),L1real:!!L1};
+}
+
+function preCard(G){
+ const M=pregame(G),live=G.live,[a,b]=live.order,nA=live.teams[a].name,nB=live.teams[b].name;
+ if(!M)return'';
+ const d=(x,y)=>y?'<b style="color:'+(x-y>=0?'#2e7d32':'#b42318')+'">'+sgn(x-y)+'</b>':'–';
+ let h='<div class="pre"><h3 style="margin:2px 0 4px">Pregame: our model vs Vegas</h3><div class="tblwrap"><table><tr><th></th><th>Ours</th><th>Vegas</th><th>Difference</th></tr>';
+ h+='<tr><td>Full game</td><td class="big">'+f1(M.total)+'</td><td>'+(M.L?f1(M.L):'–')+'</td><td>'+d(M.total,M.L)+'</td></tr>';
+ h+='<tr><td>1st half</td><td>'+f1(M.h1)+'</td><td>'+(M.L1?f1(M.L1)+(M.L1real?'':'*'):'–')+'</td><td>'+d(M.h1,M.L1)+'</td></tr>';
+ h+='<tr><td>2nd half</td><td>'+f1(M.total-M.h1)+'</td><td>'+(M.L?f1(M.L-M.L1)+(M.L1real?'':'*'):'–')+'</td><td>'+d(M.total-M.h1,M.L?M.L-M.L1:0)+'</td></tr></table></div>';
+ h+='<div class="tblwrap"><table><tr><th>Offense vs defense</th><th>'+nA+'</th><th>'+nB+'</th></tr>';
+ h+='<tr><td>Own offense (pts per trip)</td><td>'+f2(M.hA.ppp)+'</td><td>'+f2(M.hB.ppp)+'</td></tr>';
+ h+='<tr><td>Opponent\'s defense allows</td><td>'+f2(M.hB.oppp)+'</td><td>'+f2(M.hA.oppp)+'</td></tr>';
+ h+='<tr><td>Expected tonight (per trip)</td><td><b>'+f2(M.adjA)+'</b></td><td><b>'+f2(M.adjB)+'</b></td></tr>';
+ h+='<tr><td>Expected points</td><td><b>'+f1(M.ptsA)+'</b></td><td><b>'+f1(M.ptsB)+'</b></td></tr>';
+ h+='<tr><td>Normal pace (trips each)</td><td>'+f1(M.hA.pace)+'</td><td>'+f1(M.hB.pace)+'</td></tr></table></div>';
+ h+='<p class="note">Expected per trip = own offense × (opponent\'s defense ÷ league average '+f2(M.lg.ppp)+'). Matchup pace '+f1(M.pace)+' trips each. League average from '+M.lg.src+'. 1st half uses '+(M.L1real?'Vegas\'s 1st-half share':'an estimated share')+' ('+Math.round(M.share*100)+'%).'+(M.L1real?'':' * = estimated, enter the real 1st-half line.')+' Early-season numbers are inflated by weak opponents; opponent-adjusted ratings come next.</p></div>';
+ return h;
+}
+
 function tripSplit(t,poss,h,c){
  const r=h.raw,pn=h.myPoss;
  const p2=(r.fga-r.tpa)?(r.fgm-r.tpm)/(r.fga-r.tpa):0,p3=r.tpa?r.tpm/r.tpa:0,pft=r.fta?r.ftm/r.fta:0;
@@ -651,9 +699,12 @@ function breakdown(G,P,c){
  const pA=P.lA.pm,pB=P.lB.pm;
  const pace=(pA-expPoss)*P.hA.ppp+(pB-expPoss)*P.hB.ppp;
  const base=expPoss*(P.hA.ppp+P.hB.ppp)-vegasSoFar;
+ const M=pregame(G);
+ const defAdj=M?expPoss*((M.adjA-P.hA.ppp)+(M.adjB-P.hB.ppp)):0;
+ const modelVsVegas=base-defAdj;
  const TA=tripSplit(A,pA,P.hA,c),TB=tripSplit(B,pB,P.hB,c);
  const sum=k=>TA[k]+TB[k];
- const out={vegasSoFar,D,expPoss,possSoFar:(pA+pB)/2,pace,base,TA,TB,
+ const out={vegasSoFar,D,expPoss,possSoFar:(pA+pB)/2,pace,base,defAdj,modelVsVegas,M,TA,TB,
   tov:sum('tov'),ft:sum('ft'),mix:sum('mix'),orb:sum('orb'),luck:sum('luck')};
  out.check=D-(pace+base+out.tov+out.ft+out.mix+out.orb+out.luck);
  return out;
@@ -664,7 +715,7 @@ function sidePanel(G,P,c){
  let h='<div class="side"><h3>Why the model says '+(P.L&&live.state!=='pre'&&P.el>0?f1(P.proj):'–')+'</h3>';
  const B=breakdown(G,P,c);
  if(!B){return h+'<p class="note">'+(!P.L?'Needs the pregame total.':live.state==='pre'?'Appears once the game starts.':'Waiting for both teams\' history to load.')+'</p></div>'}
- const vals=[B.pace,B.tov,B.ft,B.mix,B.orb,B.luck,B.base,P.carryPace,P.carryEnd];
+ const vals=[B.pace,B.tov,B.ft,B.mix,B.orb,B.luck,B.defAdj,B.modelVsVegas,P.carryPace,P.carryEnd];
  const mx=Math.max(4,...vals.map(Math.abs));
  const bar=v=>{const w=Math.min(50,Math.abs(v)/mx*50);return'<div class="bar"><i style="'+(v>=0?'left:50%':'right:50%')+';width:'+w+'%;background:'+(v>=0?'#2e7d32':'#b42318')+'"></i></div>'};
  const row=(lab,sub,v,cls)=>'<div class="bk '+(cls||'')+'"><div class="lab">'+lab+(sub?'<small>'+sub+'</small>':'')+'</div>'+(v==null?'<div></div><div class="val">–</div>':bar(v)+'<div class="val" style="color:'+(v>=0?'#2e7d32':'#b42318')+'">'+sgn(v)+'</div>')+'</div>';
@@ -682,7 +733,9 @@ function sidePanel(G,P,c){
  h+='<div class="sec">How well they converted</div>';
  const lt=(n,L)=>n+': 2s '+sgn(L.l2)+', 3s '+sgn(L.l3)+', FT '+sgn(L.lft);
  h+=row('Shooting luck',lt(nA,TA)+'<br>'+lt(nB,TB),B.luck);
- h+=row('Teams\' normal scoring vs Vegas','teams usually score '+f2((P.hA.ppp+P.hB.ppp)/2)+'/trip, Vegas line implies '+f2(P.L/(2*P.expPace)),B.base);
+ h+='<div class="sec">Baseline</div>';
+ h+=row('Opponent defenses','normal offense '+f2((P.hA.ppp+P.hB.ppp)/2)+'/trip → '+(B.M?f2((B.M.adjA+B.M.adjB)/2):'–')+' after each defense',B.defAdj);
+ h+=row('Our pregame model vs Vegas',(B.M?'ours '+f1(B.M.total)+' vs Vegas '+f1(P.L)+' (scaled to time played)':'')+'',B.modelVsVegas);
  if(Math.abs(B.check)>0.5)h+=plain('Unexplained','should be ~0; if not, the math is off',sgn(B.check),'sub');
  h+='<div class="sec">Rest of game</div>';
  h+=row('Pace carried forward',Math.round(P.w*100)+'% of tonight\'s speed kept · '+f1(P.vegasRem)+' Vegas pts left',P.carryPace);
@@ -722,7 +775,7 @@ function render(){
   if(live.state==='in'&&G.dkStale&&!G.line)html+='<div class="warn">ESPN\'s DraftKings line hasn\'t moved while the score did. It looks stale, so it\'s not being used. Type the live line from the DraftKings app.</div>';
  }
  html+='<div class="row"><button onclick="refreshLive()">Refresh live</button><span class="note">Auto-refreshes every 45s while live.</span></div>';
- html+='<div class="wrap"><div>'+avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div></div>'+sidePanel(G,P,c)+'</div>';
+ html+='<div class="wrap"><div>'+preCard(G)+avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div></div>'+sidePanel(G,P,c)+'</div>';
  const active=document.activeElement&&document.activeElement.id;
  document.getElementById('game').innerHTML=html;
  if(active&&document.getElementById(active))document.getElementById(active).focus();
