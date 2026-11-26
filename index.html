@@ -65,6 +65,13 @@ h3{font-size:14px;margin:14px 0 4px}
 .bk.sub{font-size:12px;color:#555}
 .sec{font-size:11px;color:#1f3a5f;font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin:10px 0 2px}
 @media(max-width:980px){.wrap{grid-template-columns:minmax(0,1fr)}.side{position:static;order:-1}}
+.vbox{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0 0 10px}
+.vbox div{background:#eef2f7;border-radius:8px;padding:6px 9px}
+.vbox .l{font-size:11px;color:#555}
+.vbox .v{font-size:17px;font-weight:600}
+.vbox .s{font-size:11px;color:#555}
+.warn{background:#fff4e5;border:1px solid #f0b46a;border-radius:8px;padding:7px 10px;font-size:13px;margin:0 0 10px}
+@media(max-width:520px){.vbox{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .pacebox{border-left:3px solid #1f3a5f;padding:6px 10px;margin:6px 0;font-size:14px;background:#f8fafc}
 @media(max-width:520px){.lines{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
@@ -72,7 +79,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v5 · data from ESPN · lines from DraftKings</div>
+<div class="sub">Over/under model · v6 · data from ESPN · lines from DraftKings</div>
 </header>
 <main>
 <div class="row">
@@ -87,8 +94,8 @@ h3{font-size:14px;margin:14px 0 4px}
 </main>
 <script>
 const CFG={
- nba:{path:'basketball/nba',periods:4,plen:12,total:48,ot:5,ftc:0.44,sd:17,h1share:0.5,name:'NBA'},
- ncaa:{path:'basketball/mens-college-basketball',periods:2,plen:20,total:40,ot:5,ftc:0.475,sd:15,h1share:0.47,name:'College'}
+ nba:{path:'basketball/nba',periods:4,plen:12,total:48,ot:5,ftc:0.44,sd:17,h1share:0.5,name:'NBA',endMin:4,bands:[[3,'close',0.8],[10,'fouling range',1.3],[999,'blowout',0.4]]},
+ ncaa:{path:'basketball/mens-college-basketball',periods:2,plen:20,total:40,ot:5,ftc:0.475,sd:15,h1share:0.47,name:'College',endMin:4,bands:[[5,'close',0.7],[12,'fouling range',1.3],[999,'blowout',0.4]]}
 };
 const BASE='https://site.api.espn.com/apis/site/v2/sports/';
 const NGAMES=10, VER='r2';
@@ -284,14 +291,22 @@ function liveStats(me,op,c,el,hasPlays){
 }
 
 function phi(z){const t=1/(1+0.2316419*Math.abs(z));const d=0.3989423*Math.exp(-z*z/2);const p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return z>0?1-p:p}
-function remImplied(L,L1,el,c){const h=c.total/2;if(el>=c.total)return 0;if(el<h)return L1*(h-el)/h+(L-L1);return(L-L1)*(c.total-el)/h}
+function remImplied(L,L1,el,c){const k=clockParts(L,L1,el,c);return k.reg+k.prem}
+function clockParts(L,L1,el,c){
+ const h=c.total/2,E=c.endMin,r1=L1/h,P0=(L-L1)-r1*h;
+ const e=Math.min(Math.max(el,0),c.total);
+ const winDone=Math.max(0,Math.min(1,(e-(c.total-E))/E));
+ return{r1,P0,E,reg:r1*(c.total-e),prem:P0*(1-winDone)};
+}
+function vegasAt(L,L1,t,c){const k=clockParts(L,L1,t,c);return L-(k.reg+k.prem)}
+function marginBand(c,m){for(const b of c.bands){if(m<=b[0])return{label:b[1],mult:b[2],max:b[0]}}return null}
 function breakEven(price){const p=+price;if(!p)return 110/210;return p<0?(-p)/(-p+100):100/(p+100)}
 
 function project(G){
  const c=CFG[G.lg],live=G.live;
  const dk=live.dk||{};
  const L=+G.L||0,L1=+G.L1||L*c.h1share,h2=+G.h2||0;
- const lineAuto=!G.line&&live.state==='in'&&dk.live?dk.live:0;
+ const lineAuto=!G.line&&live.state==='in'&&dk.live&&!G.dkStale?dk.live:0;
  const line=+G.line||lineAuto;
  const el=Math.min(live.elapsed,c.total),f=el/c.total;
  const[a,b]=live.order,A=live.teams[a],B=live.teams[b];
@@ -309,19 +324,22 @@ function project(G){
    paceAdj=(hA.spp+hB.spp)/(sA+sB);
   }else if(livePace&&expPace){paceAdj=1+w*(livePace/expPace-1)}
  }
- const vegasRem=remImplied(L,L1,el,c);
- const modelRem=vegasRem*paceAdj;
+ const K=clockParts(L,L1,el,c);
+ const vegasRem=K.reg+K.prem;
+ const margin=Math.abs(A.pts-B.pts);
+ const band=marginBand(c,margin);
+ const endActive=el>=c.total-10&&live.state==='in';
+ const em=endActive&&band?band.mult:1;
+ const modelRem=K.reg*paceAdj+K.prem*em;
  const proj=pts+modelRem;
  const asIs=el?pts/el*c.total:0;
  const sdRem=c.sd*Math.sqrt(Math.max(1-f,0.0001));
- const out={L,L1,line,lineAuto:!!lineAuto,h2,el,f,pts,w,method,paceAdj,expPace,livePace,sA,sB,lA,lB,hA,hB,vegasRem,modelRem,proj,asIs,sdRem};
+ const out={L,L1,line,lineAuto:!!lineAuto,h2,el,f,pts,w,method,paceAdj,expPace,livePace,sA,sB,lA,lB,hA,hB,vegasRem,modelRem,proj,asIs,sdRem,K,margin,band,endActive,em,carryPace:K.reg*(paceAdj-1),carryEnd:K.prem*(em-1)};
  out.price=G.price||'-110';out.be=breakEven(out.price);
  if(line){out.bookRem=line-pts;out.edge=proj-line;out.pOver=1-phi((line-proj)/sdRem);
   if(!G.price&&lineAuto){const pr=out.edge>0?dk.overOdds:dk.underOdds;if(pr){out.price=(pr>0?'+':'')+pr;out.be=breakEven(pr)}}}
  if(h2&&el<=c.total/2+0.01){
-  const vegas2H=L-L1;
-  const h1rem=el<c.total/2?L1*(c.total/2-el)/(c.total/2):0;
-  out.model2H=vegas2H*paceAdj;out.h2edge=out.model2H-h2;
+  out.model2H=K.r1*(c.total/2)*paceAdj+K.P0;out.h2edge=out.model2H-h2;
   out.p2Over=1-phi((h2-out.model2H)/(c.sd*Math.sqrt(0.5)));
  }
  return out;
@@ -397,10 +415,11 @@ async function refreshLive(){
 function logDK(){
  const lv=cur.live,d=lv.dk;
  if(lv.state!=='in'||!d||!d.live)return;
+ const[a,b]=lv.order,sc=lv.teams[a].pts+lv.teams[b].pts;
  const last=cur.log.filter(x=>x.src==='DK').slice(-1)[0];
- if(last&&+last.line===d.live)return;
- const[a,b]=lv.order;
- cur.log.push({t:f1(lv.elapsed),score:lv.teams[a].pts+lv.teams[b].pts,line:d.live,src:'DK',odds:(d.overOdds||'')+'/'+(d.underOdds||'')});
+ if(last&&+last.line===d.live){cur.dkStale=(sc-last.score)>=8;return}
+ cur.dkStale=false;
+ cur.log.push({t:f1(lv.elapsed),score:sc,line:d.live,src:'DK',odds:(d.overOdds||'')+'/'+(d.underOdds||'')});
  cacheSet('lines_'+cur.id,{L:cur.L,L1:cur.L1,line:cur.line,h2:cur.h2,price:cur.price,log:cur.log});
 }
 
@@ -538,7 +557,7 @@ function charts(G,P,c){
  const live=G.live,tl=live.timeline;
  if(!tl||tl.length<2||live.state==='pre')return'';
  const half=c.total/2;
- const vegas=P.L?[[0,0],[half,P.L1],[c.total,P.L]]:[];
+ const vegas=P.L?[[0,0],[half,P.L1],[c.total-c.endMin,vegasAt(P.L,P.L1,c.total-c.endMin,c)],[c.total,P.L]]:[];
  const[a,b]=live.order,hA=G.hist[a]&&G.hist[a].l10,hB=G.hist[b]&&G.hist[b].l10;
  const exp=hA&&hB?((hA.pts+hB.opts)/2+(hB.pts+hA.opts)/2):null;
  const l10=exp?[[0,0],[c.total,exp]]:[];
@@ -549,7 +568,7 @@ function charts(G,P,c){
  const proj=P.L&&live.state==='in'?[[P.el,P.pts],[c.total,P.proj]]:[];
  let html='<div class="layer"><h3>4 · Charts</h3><div class="note">Total points so far vs the pace each line implies</div>';
  html+=svgChart([{pts:vegas,color:'#9aa5b1',dash:'6 4'},{pts:l10,color:'#c08a2b',dash:'2 4'},{pts:proj,color:'#2e7d32',dash:'5 3'},{pts:actual,color:'#1f3a5f',w:2.5}],c.total,yMax,'Total points over time',marks);
- html+='<div class="legend"><span style="--c:#1f3a5f">Actual total</span><span style="--c:#9aa5b1">Vegas pace (1st half + full game)</span><span style="--c:#c08a2b">Teams\' L10 expected</span><span style="--c:#2e7d32">Model projection</span></div>';
+ html+='<div class="legend"><span style="--c:#1f3a5f">Actual total</span><span style="--c:#9aa5b1">Vegas clock (1st half, 2nd half, late bump)</span><span style="--c:#c08a2b">Teams\' L10 expected</span><span style="--c:#2e7d32">Model projection</span></div>';
  if(hA&&hB){
   const expPoss=[[0,0],[c.total,(hA.pace+hB.pace)/2]];
   const ap=tl.map(p=>[Math.min(p.t,c.total),p.poss]);
@@ -623,9 +642,11 @@ function breakdown(G,P,c){
  };
  const LA=luckTeam(a),LB=luckTeam(b);
  const luck=LA.tot+LB.tot;
- const other=D-pace-luck;
+ const hA=P.hA,hB=P.hB,vegasPPP=P.L/(2*P.expPace);
+ const base=(P.lA.pm*hA.ppp+P.lB.pm*hB.ppp)-(P.lA.pm+P.lB.pm)*vegasPPP;
+ const other=D-pace-luck-base;
  const carry=P.modelRem-P.vegasRem;
- return{vegasSoFar,D,pace,luck,LA,LB,other,carry,expPossSoFar,possSoFar};
+ return{vegasSoFar,D,pace,luck,LA,LB,base,other,carry,expPossSoFar,possSoFar,vegasPPP};
 }
 
 function sidePanel(G,P,c){
@@ -633,7 +654,7 @@ function sidePanel(G,P,c){
  let h='<div class="side"><h3>Why the model says '+(P.L&&live.state!=='pre'&&P.el>0?f1(P.proj):'–')+'</h3>';
  const B=breakdown(G,P,c);
  if(!B){return h+'<p class="note">'+(!P.L?'Needs the pregame total.':live.state==='pre'?'Appears once the game starts.':'Waiting for both teams\' history to load.')+'</p></div>'}
- const vals=[B.pace,B.luck,B.other,B.carry];
+ const vals=[B.pace,B.luck,B.base,B.other,P.carryPace,P.carryEnd];
  const mx=Math.max(4,...vals.map(Math.abs));
  const bar=v=>{const w=Math.min(50,Math.abs(v)/mx*50);return'<div class="bar"><i style="'+(v>=0?'left:50%':'right:50%')+';width:'+w+'%;background:'+(v>=0?'#2e7d32':'#b42318')+'"></i></div>'};
  const row=(lab,sub,v,cls)=>'<div class="bk '+(cls||'')+'"><div class="lab">'+lab+(sub?'<small>'+sub+'</small>':'')+'</div>'+(v==null?'<div></div><div class="val">–</div>':bar(v)+'<div class="val" style="color:'+(v>=0?'#2e7d32':'#b42318')+'">'+sgn(v)+'</div>')+'</div>';
@@ -644,11 +665,12 @@ function sidePanel(G,P,c){
  h+=row('Pace',f1(B.possSoFar)+' possessions vs '+f1(B.expPossSoFar)+' normal by now',B.pace);
  const lt=(n,L)=>n+': 3s '+sgn(L.l3)+', 2s '+sgn(L.l2)+', FT '+sgn(L.lft);
  h+=row('Shooting luck',lt(nA,B.LA)+'<br>'+lt(nB,B.LB),B.luck);
- h+=row('Turnovers, rebounds, shot volume','everything else vs Vegas pace',B.other);
+ h+=row('Teams\' normal scoring vs Vegas','teams usually score '+f2((P.hA.ppp+P.hB.ppp)/2)+'/trip, Vegas line implies '+f2(B.vegasPPP),B.base);
+ h+=row('Turnovers & rebounds','what\'s left: extra or lost trips, second chances',B.other);
  h+='<div class="sec">Rest of game</div>';
- h+=row('Pace carried forward',Math.round(P.w*100)+'% of tonight\'s speed kept · '+f1(P.vegasRem)+' Vegas pts left',B.carry);
+ h+=row('Pace carried forward',Math.round(P.w*100)+'% of tonight\'s speed kept · '+f1(P.vegasRem)+' Vegas pts left',P.carryPace);
  h+=plain('Shooting','resets to each team\'s normal','0.0','sub');
- h+=plain('End of game (fouling, margin)','not modeled yet','–','sub');
+ h+=row('End of game (fouling)',P.endActive&&P.band?'margin '+P.margin+' → '+P.band.label+' (×'+P.band.mult+' on Vegas\'s late bump)':'Vegas\'s average ending; margin rule starts with 10 min left',P.carryEnd);
  h+=plain('<b>Model final</b>','',f1(P.proj),'tot');
  if(P.line){
   const side=P.edge>0?'over':'under',pSide=P.edge>0?P.pOver:1-P.pOver;
@@ -670,6 +692,17 @@ function render(){
  if(dk){
   const o=v=>v==null?'–':(v>0?'+'+v:v);
   html+='<div class="dkbar">'+dk.prov+': '+(live.state==='in'&&dk.live?'live <b>'+dk.live+'</b> (over '+o(dk.overOdds)+' / under '+o(dk.underOdds)+') · ':'')+'pregame close '+(dk.close||'–')+' · open '+(dk.open||'–')+(live.state==='in'?' · updates every 45s':'')+'<br><span class="note">Live total and price fill in from DraftKings automatically. Type your own to override; clear the box to go back to DraftKings. Confirm the line in the DraftKings app before betting.</span></div>';
+ }
+ {const P0=project(G);const K=P0.K;
+  if(P0.L){
+   const h2=P0.L-P0.L1,gap=h2-P0.L1;
+   html+='<div class="vbox"><div><div class="l">Full game</div><div class="v">'+f1(P0.L)+'</div></div>'+
+    '<div><div class="l">1st half</div><div class="v">'+f1(P0.L1)+'</div><div class="s">'+(G.L1?'your line':'estimate · enter the real line')+'</div></div>'+
+    '<div><div class="l">2nd half (implied)</div><div class="v">'+f1(h2)+'</div><div class="s">'+(gap>=0?'+':'')+f1(gap)+' vs 1st half</div></div>'+
+    '<div><div class="l">Vegas clock</div><div class="v">'+f1(K.r1)+' → '+f1(K.r1+K.P0/K.E)+'</div><div class="s">pts/min normal → last '+K.E+' min</div></div></div>';
+  }
+  if(live.state==='in'&&P0.band&&P0.endActive)html+='<div class="warn">Endgame: margin '+P0.margin+' → <b>'+P0.band.label+'</b>. Late bump from Vegas × '+P0.band.mult+' (starting guess; adjust as we learn).'+(P0.band.label==='fouling range'?' Expect fouling and free throws.':P0.band.label==='close'?' Close game: fouling usually waits until the last minute.':' Blowout: expect benches and a slower finish.')+'</div>';
+  if(live.state==='in'&&G.dkStale&&!G.line)html+='<div class="warn">ESPN\'s DraftKings line hasn\'t moved while the score did. It looks stale, so it\'s not being used. Type the live line from the DraftKings app.</div>';
  }
  html+='<div class="row"><button onclick="refreshLive()">Refresh live</button><span class="note">Auto-refreshes every 45s while live.</span></div>';
  html+='<div class="wrap"><div>'+avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div></div>'+sidePanel(G,P,c)+'</div>';
