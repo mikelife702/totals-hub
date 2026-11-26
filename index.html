@@ -700,8 +700,8 @@ function breakdown(G,P,c){
  const pace=(pA-expPoss)*P.hA.ppp+(pB-expPoss)*P.hB.ppp;
  const base=expPoss*(P.hA.ppp+P.hB.ppp)-vegasSoFar;
  const M=pregame(G);
- const defAdj=M?expPoss*((M.adjA-P.hA.ppp)+(M.adjB-P.hB.ppp)):0;
- const modelVsVegas=base-defAdj;
+ const modelVsVegas=M?M.total*share-vegasSoFar:0;
+ const defAdj=base-modelVsVegas;
  const TA=tripSplit(A,pA,P.hA,c),TB=tripSplit(B,pB,P.hB,c);
  const sum=k=>TA[k]+TB[k];
  const out={vegasSoFar,D,expPoss,possSoFar:(pA+pB)/2,pace,base,defAdj,modelVsVegas,M,TA,TB,
@@ -734,7 +734,7 @@ function sidePanel(G,P,c){
  const lt=(n,L)=>n+': 2s '+sgn(L.l2)+', 3s '+sgn(L.l3)+', FT '+sgn(L.lft);
  h+=row('Shooting luck',lt(nA,TA)+'<br>'+lt(nB,TB),B.luck);
  h+='<div class="sec">Baseline</div>';
- h+=row('Opponent defenses','normal offense '+f2((P.hA.ppp+P.hB.ppp)/2)+'/trip → '+(B.M?f2((B.M.adjA+B.M.adjB)/2):'–')+' after each defense',B.defAdj);
+ h+=row('Offense averages vs tonight\'s defenses','teams normally score '+f2((P.hA.ppp+P.hB.ppp)/2)+'/trip; vs these defenses we expect '+(B.M?f2((B.M.adjA+B.M.adjB)/2):'–'),B.defAdj);
  h+=row('Our pregame model vs Vegas',(B.M?'ours '+f1(B.M.total)+' vs Vegas '+f1(P.L)+' (scaled to time played)':'')+'',B.modelVsVegas);
  if(Math.abs(B.check)>0.5)h+=plain('Unexplained','should be ~0; if not, the math is off',sgn(B.check),'sub');
  h+='<div class="sec">Rest of game</div>';
