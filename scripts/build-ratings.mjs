@@ -41,6 +41,14 @@ const num = v => (v == null ? 0 : parseFloat(v) || 0);
 function pair(v) { if (!v) return [0, 0]; const p = String(v).split('-'); return [+p[0] || 0, +p[1] || 0]; }
 function stat(stats, names) { for (const n of names) { const s = stats.find(x => x.name === n); if (s && s.displayValue !== undefined && s.displayValue !== '') return s.displayValue; } return null; }
 
+function parseLines(sum) {
+  const pc = (sum.pickcenter || []).find(p => p.total) || (sum.pickcenter || [])[0];
+  if (!pc) return { close: null, open: null };
+  const ln = v => { const n = parseFloat(String(v || '').replace(/^[ou]/i, '')); return isNaN(n) ? null : n; };
+  const t = pc.total || {}, o = t.over || {};
+  return { book: (pc.provider && pc.provider.name) || null, open: ln(o.open && o.open.line), close: ln(o.close && o.close.line) || (pc.overUnder ? +pc.overUnder : null), spread: pc.spread != null ? +pc.spread : null };
+}
+
 function compactGame(sum, cfg) {
   const comp = sum.header && sum.header.competitions && sum.header.competitions[0];
   if (!comp || !(comp.status && comp.status.type && comp.status.type.completed)) return null;
@@ -62,7 +70,7 @@ function compactGame(sum, cfg) {
   if (teams.length !== 2 || teams.some(t => !t || !t.fga)) return null;
   const per = (comp.status && comp.status.period) || cfg.periods;
   return { id: String(sum.header.id), date: comp.date, neutral: !!comp.neutralSite, confGame: !!comp.conferenceCompetition,
-    mins: cfg.mins + Math.max(0, per - cfg.periods) * cfg.ot, teams };
+    mins: cfg.mins + Math.max(0, per - cfg.periods) * cfg.ot, teams, lines: parseLines(sum) };
 }
 
 async function updateGames(lg, cfg) {
@@ -81,7 +89,7 @@ async function updateGames(lg, cfg) {
         meta[String(e.id)] = { neutral: !!c.neutralSite, confGame: !!c.conferenceCompetition };
         (c.competitors || []).forEach(t => { if (t.team && t.team.conferenceId) confTeams[String(t.team.id)] = t.team.conferenceId; });
       }
-      if (!store.games[e.id]) ids.push(String(e.id));
+      if (!store.games[e.id] || !store.games[e.id].lines) ids.push(String(e.id));
     }
   }
   console.log(lg + ': ' + Object.keys(store.games).length + ' cached games, ' + ids.length + ' new to fetch');
@@ -214,6 +222,77 @@ export function computeRatings(games, cfg, now = new Date()) {
     lg: Object.fromEntries(Object.entries(lg).map(([k, v]) => [k, +v.toFixed(4)])), ratings: out };
 }
 
+// ---------- season replay (walk-forward) ----------
+// For each day, rate teams using only games played before that day, predict each game's total,
+// and compare with the DraftKings closing line and the final score.
+export function backtest(games, cfg) {
+  const etDay = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
+  const byDay = {};
+  games.forEach(g => { (byDay[etDay(g.date)] = byDay[etDay(g.date)] || []).push(g); });
+  const days = Object.keys(byDay).sort();
+  const rows = [];
+  for (const day of days) {
+    const todays = byDay[day].filter(g => g.lines && g.lines.close);
+    if (!todays.length) continue;
+    const train = games.filter(g => etDay(g.date) < day);
+    if (train.length < 50) continue;
+    const R = computeRatings(train, cfg, new Date(day + 'T12:00:00Z'));
+    for (const g of todays) {
+      const [a, b] = g.teams, ra = R.ratings[a.id], rb = R.ratings[b.id];
+      if (!ra || !rb || ra.games < 3 || rb.games < 3) continue;
+      const hf = t => g.neutral ? 1 : (t.home ? 1 + HCA : 1 - HCA);
+      const pace = ra.t * rb.t / R.lg.tempo;
+      const pred = pace * (ra.o * rb.d / R.lg.eff * hf(a) + rb.o * ra.d / R.lg.eff * hf(b)) * g.mins / cfg.mins;
+      const final = a.pts + b.pts, close = g.lines.close, open = g.lines.open;
+      const side = pred > close ? 'over' : 'under';
+      const result = final > close ? 'over' : final < close ? 'under' : 'push';
+      const form = r => r.last5 ? ((r.last5.o - r.last5.d) - (r.o - r.d)) * 100 : 0;
+      const feat = {
+        pace: +pace.toFixed(1), paceVsLg: +(pace - R.lg.tempo).toFixed(1),
+        offense: +(100 * ((ra.o + rb.o) / 2 / R.lg.eff - 1)).toFixed(1), defense: +(100 * ((ra.d + rb.d) / 2 / R.lg.eff - 1)).toFixed(1),
+        form: +((form(ra) + form(rb)) / 2).toFixed(1), spread: g.lines.spread != null ? Math.abs(g.lines.spread) : null,
+        line: close, minGames: Math.min(ra.games, rb.games), seasonDay: Math.round((new Date(day) - new Date(days[0])) / 864e5),
+        conf: g.confGame ? 1 : 0, neutral: g.neutral ? 1 : 0,
+      };
+      rows.push({ id: g.id, day, game: a.abbr + ' v ' + b.abbr, pred: +pred.toFixed(1), open, close, final, diff: +(pred - close).toFixed(1), feat,
+        side, result, win: result === 'push' ? null : side === result,
+        moved: open != null && close !== open ? (Math.sign(close - open) === Math.sign(pred - open) ? 'toward' : 'away') : 'none' });
+    }
+  }
+  const buckets = [[0, 1.5], [1.5, 3], [3, 5], [5, 8], [8, 99]];
+  const summarize = rs => {
+    const w = rs.filter(r => r.win === true).length, l = rs.filter(r => r.win === false).length, p = rs.filter(r => r.win === null).length;
+    return { n: rs.length, w, l, p, pct: w + l ? +(100 * w / (w + l)).toFixed(1) : null, roi: w + l ? +(100 * (w * 100 / 110 - l) / (w + l)).toFixed(1) : null };
+  };
+  const mae = (rs, f) => rs.length ? +(rs.reduce((s, r) => s + Math.abs(r.final - f(r)), 0) / rs.length).toFixed(2) : null;
+  const bias = (rs, f) => rs.length ? +(rs.reduce((s, r) => s + (r.final - f(r)), 0) / rs.length).toFixed(2) : null;
+  const mv = rs => { const m = rs.filter(r => r.moved !== 'none'); const t = m.filter(r => r.moved === 'toward').length; return { n: rs.length, moved: m.length, toward: t, away: m.length - t, pctToward: m.length ? +(100 * t / m.length).toFixed(1) : null }; };
+  // Where is the edge? For each ingredient, split games into thirds and show
+  // (a) how Vegas missed (final minus close: + means games went over the line) and
+  // (b) how our picks did. A third where Vegas misses one way consistently is a lead worth chasing.
+  const avg = (rs, f) => rs.length ? +(rs.reduce((s, r) => s + f(r), 0) / rs.length).toFixed(2) : null;
+  const factors = {};
+  Object.keys((rows[0] && rows[0].feat) || {}).forEach(k => {
+    const rs = rows.filter(r => r.feat[k] != null).sort((x, y) => x.feat[k] - y.feat[k]);
+    if (rs.length < 30) return;
+    const binary = rs.every(r => r.feat[k] === 0 || r.feat[k] === 1);
+    const groups = binary ? [['no', rs.filter(r => r.feat[k] === 0)], ['yes', rs.filter(r => r.feat[k] === 1)]]
+      : [['low', rs.slice(0, Math.floor(rs.length / 3))], ['mid', rs.slice(Math.floor(rs.length / 3), Math.floor(2 * rs.length / 3))], ['high', rs.slice(Math.floor(2 * rs.length / 3))]];
+    factors[k] = groups.map(([label, g]) => ({ label, n: g.length, from: g.length ? g[0].feat[k] : null, to: g.length ? g[g.length - 1].feat[k] : null,
+      vegasMiss: avg(g, r => r.final - r.close), ourMiss: avg(g, r => r.final - r.pred), overPct: +(100 * g.filter(r => r.final > r.close).length / Math.max(1, g.filter(r => r.final !== r.close).length)).toFixed(1),
+      picks: summarize(g.filter(r => Math.abs(r.diff) >= 3)) }));
+  });
+  return {
+    updated: new Date().toISOString(), games: rows.length, factors, days: [...new Set(rows.map(r => r.day))].length,
+    accuracy: { maeVegas: mae(rows, r => r.close), maeOurs: mae(rows, r => r.pred), biasVegas: bias(rows, r => r.close), biasOurs: bias(rows, r => r.pred) },
+    all: summarize(rows),
+    buckets: buckets.map(([lo, hi]) => ({ range: lo + (hi < 99 ? '–' + hi : '+'), ...summarize(rows.filter(r => Math.abs(r.diff) >= lo && Math.abs(r.diff) < hi)) })),
+    bySide: { over: summarize(rows.filter(r => r.side === 'over' && Math.abs(r.diff) >= 3)), under: summarize(rows.filter(r => r.side === 'under' && Math.abs(r.diff) >= 3)) },
+    lineMove: { all: mv(rows), gap2: mv(rows.filter(r => r.open != null && Math.abs(r.pred - r.open) >= 2)), gap4: mv(rows.filter(r => r.open != null && Math.abs(r.pred - r.open) >= 4)) },
+    rows: rows.slice(-400),
+  };
+}
+
 async function main() {
   fs.mkdirSync(DATA, { recursive: true });
   const which = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(LEAGUES);
@@ -222,6 +301,9 @@ async function main() {
     const store = await updateGames(lg, cfg);
     const res = computeRatings(Object.values(store.games), cfg);
     fs.writeFileSync(path.join(DATA, lg + '-ratings.json'), JSON.stringify(res));
+    const bt = backtest(Object.values(store.games), cfg);
+    fs.writeFileSync(path.join(DATA, lg + '-backtest.json'), JSON.stringify(bt));
+    console.log(lg + ' replay: ' + bt.games + ' games, all ' + JSON.stringify(bt.all) + ', buckets ' + JSON.stringify(bt.buckets) + ', line moves ' + JSON.stringify(bt.lineMove) + ', accuracy ' + JSON.stringify(bt.accuracy));
     const top = Object.values(res.ratings).sort((a, b) => a.rank - b.rank).slice(0, 10)
       .map(t => t.rank + '. ' + t.name + ' ' + (t.em > 0 ? '+' : '') + t.em + ' (O ' + (t.o * 100).toFixed(1) + ' / D ' + (t.d * 100).toFixed(1) + ' / T ' + t.t + ')');
     console.log(lg + ': ' + res.teams + ' teams rated from ' + res.games + ' games. League ' + (res.lg.eff * 100).toFixed(1) + ' pts/100, tempo ' + res.lg.tempo);
