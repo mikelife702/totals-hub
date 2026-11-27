@@ -11,6 +11,9 @@ const LEAGUES = {
   // last season, for out-of-sample testing (run by hand: node scripts/build-ratings.mjs ncaa2025 nba2025)
   ncaa2025: { path: 'basketball/mens-college-basketball', extra: '&groups=50&limit=400', start: '2025-11-03', end: '2026-04-07', mins: 40, ot: 5, ftc: 0.475, periods: 2, d1Only: true, history: true },
   nba2025:  { path: 'basketball/nba', extra: '', start: '2025-10-21', end: '2026-04-13', mins: 48, ot: 5, ftc: 0.44, periods: 4, d1Only: false, history: true },
+  // two seasons ago; game summaries there carry no lines, so totals come from ESPN's core odds feed (ESPN BET)
+  ncaa2024: { path: 'basketball/mens-college-basketball', extra: '&groups=50&limit=400', start: '2024-11-04', end: '2025-04-08', mins: 40, ot: 5, ftc: 0.475, periods: 2, d1Only: true, history: true, coreOdds: true },
+  nba2024:  { path: 'basketball/nba', extra: '', start: '2024-10-22', end: '2025-04-13', mins: 48, ot: 5, ftc: 0.44, periods: 4, d1Only: false, history: true, coreOdds: true },
 };
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/';
 const HALF_LIFE_DAYS = 30;   // a game this many days old counts half as much as today's
@@ -50,6 +53,16 @@ function parseLines(sum) {
   const ln = v => { const n = parseFloat(String(v || '').replace(/^[ou]/i, '')); return isNaN(n) ? null : n; };
   const t = pc.total || {}, o = t.over || {};
   return { book: (pc.provider && pc.provider.name) || null, open: ln(o.open && o.open.line), close: ln(o.close && o.close.line) || (pc.overUnder ? +pc.overUnder : null), spread: pc.spread != null ? +pc.spread : null };
+}
+
+// Fallback for older seasons: ESPN core odds feed (pregame provider, not the live one)
+async function coreLines(cfg, id) {
+  const lg = cfg.path.split('/')[1];
+  const o = await getJSON('https://sports.core.api.espn.com/v2/sports/basketball/leagues/' + lg + '/events/' + id + '/competitions/' + id + '/odds').catch(() => null);
+  const it = o && o.items && o.items.find(i => i.overUnder && !/live/i.test((i.provider && i.provider.name) || ''));
+  if (!it) return { close: null, open: null };
+  const op = it.open && it.open.total && parseFloat(it.open.total.alternateDisplayValue);
+  return { book: (it.provider && it.provider.name) || null, open: isNaN(op) ? null : op, close: +it.overUnder, spread: it.spread != null ? +it.spread : null };
 }
 
 // 1st- and 2nd-half team stats from play-by-play (regulation only; NBA halves = Q1-2 / Q3-4)
@@ -124,7 +137,11 @@ async function updateGames(lg, cfg) {
     }
   }
   console.log(lg + ': ' + Object.keys(store.games).length + ' cached games, ' + ids.length + ' new to fetch');
-  const recs = await pool(ids, 6, async id => compactGame(await getJSON(BASE + cfg.path + '/summary?event=' + id), cfg));
+  const recs = await pool(ids, 6, async id => {
+    const r = compactGame(await getJSON(BASE + cfg.path + '/summary?event=' + id), cfg);
+    if (r && cfg.coreOdds && !(r.lines && r.lines.close)) r.lines = await coreLines(cfg, id);
+    return r;
+  });
   let added = 0;
   recs.forEach(r => { if (r) { store.games[r.id] = r; added++; } });
   // scoreboard carries conference and neutral-site info that game summaries lack
