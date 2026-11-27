@@ -1,0 +1,48 @@
+name: Odds API halftime lines (past season)
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'Season file (ncaa2025, ncaa2024, ncaa2023)'
+        default: 'ncaa2025'
+      start:
+        description: 'First day YYYY-MM-DD (blank = season start)'
+        default: ''
+      maxdays:
+        description: 'Max days to pull this run (999 = all)'
+        default: '999'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ratings
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Pull halftime 2nd-half lines
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: node scripts/odds-halftime.mjs "${{ inputs.season }}" "${{ inputs.start }}" "${{ inputs.maxdays }}"
+      - name: Commit
+        if: always()
+        run: |
+          git config user.name "ratings-bot"
+          git config user.email "ratings-bot@users.noreply.github.com"
+          git add data/*-h2lines.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Halftime lines ${{ inputs.season }} $(date -u +%Y-%m-%d)"
+            git pull --rebase
+            git push
+          fi
