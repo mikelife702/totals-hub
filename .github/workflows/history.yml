@@ -1,7 +1,11 @@
-name: History pull (last season)
+name: History pull (past seasons)
 
 on:
-  workflow_dispatch: {}     # run by hand from the Actions tab
+  workflow_dispatch:        # run by hand from the Actions tab
+    inputs:
+      seasons:
+        description: 'Seasons to pull (e.g. ncaa2024 nba2024, or ncaa2025 nba2025)'
+        default: 'ncaa2024 nba2024'
 
 permissions:
   contents: write
@@ -19,8 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Pull 2025-26 college + NBA games (box scores, halves, closing lines)
-        run: node scripts/build-ratings.mjs ncaa2025 nba2025
+      - name: Pull past-season college + NBA games (box scores, halves, closing lines)
+        run: node scripts/build-ratings.mjs ${{ inputs.seasons }}
       - name: Commit history data
         run: |
           git config user.name "ratings-bot"
@@ -29,7 +33,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "History pull 2025-26 $(date -u +%Y-%m-%d)"
+            git commit -m "History pull ${{ inputs.seasons }} $(date -u +%Y-%m-%d)"
             git pull --rebase
             git push
           fi
