@@ -84,7 +84,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v16 · data from ESPN · lines from DraftKings · <a href="backtest.html" style="color:#fff">Season replay →</a></div>
+<div class="sub">Over/under model · v17 · data from ESPN · lines from DraftKings · <a href="backtest.html" style="color:#fff">Season replay →</a></div>
 </header>
 <main>
 <div class="row">
@@ -363,11 +363,15 @@ function project(G){
  let method='poss',paceAdj=1,expPace=null,livePace=null,sA=null,sB=null;
  if(hA&&hB){
   expPace=(hA.pace+hB.pace)/2;
+  // opponent-adjusted matchup pace from the ratings (strength of schedule, recency, home/away); recent games keep the split between the two teams
+  const RTp=RAT[G.lg],ra=RTp&&RTp.ratings&&RTp.ratings[a],rb=RTp&&RTp.ratings&&RTp.ratings[b];
+  var paceScale=1;if(ra&&rb&&RTp.lg&&RTp.lg.tempo){const mp=ra.t*rb.t/RTp.lg.tempo;paceScale=expPace/mp;expPace=mp}
   livePace=el?((lA.pm+lB.pm)/2)/el*c.total:null;
   if(hA.spp&&hB.spp&&lA.spp&&lB.spp&&lA.pm>=4&&lB.pm>=4){
    method='spp';
-   sA=hA.spp+w*(lA.spp-hA.spp);sB=hB.spp+w*(lB.spp-hB.spp);
-   paceAdj=(hA.spp+hB.spp)/(sA+sB);
+   const nA=hA.spp*paceScale,nB=hB.spp*paceScale;
+   sA=nA+w*(lA.spp-nA);sB=nB+w*(lB.spp-nB);
+   paceAdj=(nA+nB)/(sA+sB);
   }else if(livePace&&expPace){paceAdj=1+w*(livePace/expPace-1)}
  }
  const K=clockParts(L,L1,el,c);
