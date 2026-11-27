@@ -135,6 +135,15 @@ async function load(lg) {
     t += '<tr class="grp"><td colspan="6">When the models agree</td></tr>';
     [['All 4 agree', HT.agree.all4], ['3+ agree, none against', HT.agree.three]].forEach(([lab, arr]) => { t += '<tr><td>' + lab + '</td><td></td>' + arr.map(b => b.n ? '<td class="' + (b.n < 30 ? 'muted' : b.pct >= BE ? 'good' : 'bad') + '">' + b.w + '–' + b.l + ' · ' + b.pct.toFixed(1) + '%</td>' : '<td class="muted">–</td>').join('') + '<td class="muted"></td></tr>'; });
     h.push(t + '</table></div><p class="note">"Gap" = how far the model is from the 2nd-half line. Agreement columns use gaps of 1+, 2+, 3+.</p>');
+    if (HT.modelsRaw) {
+      h.push('<h2>Which "normal" works better?</h2><p class="note">Same four models, two ways of setting each team\'s normal: <b>adjusted</b> = opponent-adjusted ratings as of the day before (strength of schedule, recent games count more, home/away), vs <b>raw</b> = plain season averages. Lower average miss = better 2nd-half prediction. ' + esc(HT.normals || '') + '</p>');
+      const V = [['raw', HT.modelsRaw], ['adjusted', HT.models], ['similar opponents', HT.modelsSit]].filter(x => x[1]);
+      const cell = b => b && b.n ? b.w + '–' + b.l + ' · ' + b.pct.toFixed(1) + '%' : '–';
+      let c = '<div class="tw"><table><tr><th>Model</th>' + V.map(x => '<th>Avg miss · ' + x[0] + '</th>').join('') + V.map(x => '<th>Gap 3+ · ' + x[0] + '</th>').join('') + '</tr>';
+      HT.models.forEach((m, i) => { const maes = V.map(x => x[1][i].mae), best = Math.min(...maes);
+        c += '<tr><td>' + esc(m.key + ' · ' + m.name) + '</td>' + maes.map(v => '<td class="' + (v === best ? 'good' : '') + '">' + f1(v) + '</td>').join('') + V.map(x => '<td>' + cell(x[1][i].bets[2]) + '</td>').join('') + '</tr>'; });
+      h.push(c + '</table></div><p class="note"><b>Similar opponents</b> = what each team actually did (no strength-of-schedule formula) against opponents like tonight\'s: same rank tier (top-25 / 26–50 / 51–100 / 100+), conference or not, home / away / neutral. More similar games = more weight.</p>');
+    }
     h.push('<h2>What kind of first half?</h2><p class="note">Each first half sorted by why it ran over or under the number: hot/cold shooting (net of second chances) vs pace. Over % = how often the 2nd half went over the 2nd-half line.</p>');
     h.push('<div class="tw"><table><tr><th>1st half</th><th>Games</th><th>2nd half over %</th><th>2nd half vs line</th></tr>' + HT.types.map(x => '<tr><td>' + esc(x.type) + '</td><td>' + x.n + '</td><td class="' + (x.n < 30 || x.overPct == null ? 'muted' : (x.overPct >= BE || 100 - x.overPct >= BE) ? 'good' : '') + '">' + (x.overPct == null ? '–' : x.overPct.toFixed(1) + '%') + '</td><td>' + sg(x.vsLine) + '</td></tr>').join('') + '</table></div>');
   }
