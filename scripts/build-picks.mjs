@@ -117,7 +117,8 @@ function pick(g, F, C) {
   const both = same ? Math.min(Math.abs(gF), Math.abs(gC)) : 0;
   const tier = both >= 8 ? 'A' : both >= 5 ? 'B' : (same && Math.abs(FC - line) >= 5 ? 'C' : null);
   return { F: +F.toFixed(1), C: +C.toFixed(1), FC: +FC.toFixed(1), open, current: cur, line, gapF: +gF.toFixed(1), gapC: +gC.toFixed(1),
-    side: tier ? (gF > 0 ? 'OVER' : 'UNDER') : null, tier, price: tier ? (gF > 0 ? (g.lines.overOdds || [])[0] : (g.lines.underOdds || [])[0]) ?? null : null };
+    side: tier ? (gF > 0 ? 'OVER' : 'UNDER') : null, tier, price: tier ? (gF > 0 ? (g.lines.overOdds || [])[0] : (g.lines.underOdds || [])[0]) ?? null : null,
+    po: (g.lines.overOdds || [])[0] ?? null, pu: (g.lines.underOdds || [])[0] ?? null };
 }
 
 // ---------- ESPN (live) ----------
@@ -175,7 +176,7 @@ async function main() {
   const logFile = 'data/ncaa-picks-log.json', log = fs.existsSync(logFile) ? JSON.parse(fs.readFileSync(logFile, 'utf8')) : { picks: {} };
   for (const g of games) { if (g.F == null) continue; const old = log.picks[g.id]; if (old && old.result) continue;
     // keep the first-seen opener and model numbers (the bet we would have made), refresh current line
-    log.picks[g.id] = old && old.line != null ? { ...old, current: g.current } : { id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, logged: new Date().toISOString() }; }
+    log.picks[g.id] = old && old.line != null ? { ...old, current: g.current } : { id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, po: g.po, pu: g.pu, logged: new Date().toISOString() }; }
   grade(log, store); log.updated = new Date().toISOString();
   fs.writeFileSync(logFile, JSON.stringify(log));
   console.log('picks: ' + games.length + ' upcoming, ' + games.filter(g => g.tier === 'A' || g.tier === 'B').length + ' rule bets | record ' + JSON.stringify(log.record || {}));
