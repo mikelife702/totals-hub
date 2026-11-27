@@ -52,7 +52,11 @@ function parseLines(sum) {
   if (!pc) return { close: null, open: null };
   const ln = v => { const n = parseFloat(String(v || '').replace(/^[ou]/i, '')); return isNaN(n) ? null : n; };
   const t = pc.total || {}, o = t.over || {};
-  return { book: (pc.provider && pc.provider.name) || null, open: ln(o.open && o.open.line), close: ln(o.close && o.close.line) || (pc.overUnder ? +pc.overUnder : null), spread: pc.spread != null ? +pc.spread : null };
+  const od = x => { if (!x || x.odds == null) return null; const v = String(x.odds); if (/even/i.test(v)) return 100; const n = parseFloat(v.replace('+', '')); return isNaN(n) ? null : n; };
+  const sl = x => { if (!x || x.line == null) return null; const v = String(x.line); if (/pk|even/i.test(v)) return 0; return ln(v); };
+  const ps = pc.pointSpread || {}, ml = pc.moneyline || {}, u = t.under || {}, hs = ps.home || {}, mh = ml.home || {}, ma = ml.away || {};
+  return { book: (pc.provider && pc.provider.name) || null, open: ln(o.open && o.open.line), close: ln(o.close && o.close.line) || (pc.overUnder ? +pc.overUnder : null), spread: pc.spread != null ? +pc.spread : null,
+    spreadOpen: sl(hs.open), spreadClose: sl(hs.close), mlHome: [od(mh.open), od(mh.close)], mlAway: [od(ma.open), od(ma.close)], overOdds: [od(o.open), od(o.close)], underOdds: [od(u.open), od(u.close)] };
 }
 
 // Fallback for older seasons: ESPN core odds feed (pregame provider, not the live one)
@@ -62,7 +66,11 @@ async function coreLines(cfg, id) {
   const it = o && o.items && o.items.find(i => i.overUnder && !/live/i.test((i.provider && i.provider.name) || ''));
   if (!it) return { close: null, open: null };
   const op = it.open && it.open.total && parseFloat(it.open.total.alternateDisplayValue);
-  return { book: (it.provider && it.provider.name) || null, open: isNaN(op) ? null : op, close: +it.overUnder, spread: it.spread != null ? +it.spread : null };
+  const av = x => { if (!x) return null; const v = String(x.alternateDisplayValue != null ? x.alternateDisplayValue : x.american); if (/pk|even/i.test(v)) return /even/i.test(v) ? 100 : 0; const n = parseFloat(v.replace('+', '')); return isNaN(n) ? null : n; };
+  const H = it.homeTeamOdds || {}, A = it.awayTeamOdds || {}, g = (o, k) => o && o[k];
+  return { book: (it.provider && it.provider.name) || null, open: isNaN(op) ? null : op, close: +it.overUnder, spread: it.spread != null ? +it.spread : null,
+    spreadOpen: av(g(H.open, 'pointSpread')), spreadClose: av(g(H.close, 'pointSpread')), mlHome: [av(g(H.open, 'moneyLine')), av(g(H.close, 'moneyLine'))], mlAway: [av(g(A.open, 'moneyLine')), av(g(A.close, 'moneyLine'))],
+    overOdds: [av(g(it.open, 'over')), av(g(it.close, 'over'))], underOdds: [av(g(it.open, 'under')), av(g(it.close, 'under'))] };
 }
 
 // 1st- and 2nd-half team stats from play-by-play (regulation only; NBA halves = Q1-2 / Q3-4)
@@ -113,7 +121,7 @@ function compactGame(sum, cfg) {
   if (teams.length !== 2 || teams.some(t => !t || !t.fga)) return null;
   const per = (comp.status && comp.status.period) || cfg.periods;
   return { id: String(sum.header.id), date: comp.date, neutral: !!comp.neutralSite, confGame: !!comp.conferenceCompetition,
-    mins: cfg.mins + Math.max(0, per - cfg.periods) * cfg.ot, teams, lines: parseLines(sum), halves: parseHalves(sum, cfg), v: 2 };
+    mins: cfg.mins + Math.max(0, per - cfg.periods) * cfg.ot, teams, lines: parseLines(sum), halves: parseHalves(sum, cfg), v: 3 };
 }
 
 async function updateGames(lg, cfg) {
@@ -133,7 +141,7 @@ async function updateGames(lg, cfg) {
         meta[String(e.id)] = { neutral: !!c.neutralSite, confGame: !!c.conferenceCompetition };
         (c.competitors || []).forEach(t => { if (t.team && t.team.conferenceId) confTeams[String(t.team.id)] = t.team.conferenceId; });
       }
-      if (!store.games[e.id] || !store.games[e.id].lines || !(store.games[e.id].v >= 2)) ids.push(String(e.id));
+      if (!store.games[e.id] || !store.games[e.id].lines || !(store.games[e.id].v >= 3)) ids.push(String(e.id));
     }
   }
   console.log(lg + ': ' + Object.keys(store.games).length + ' cached games, ' + ids.length + ' new to fetch');
