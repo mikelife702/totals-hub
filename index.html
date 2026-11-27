@@ -700,12 +700,12 @@ function modelsCard(G){
  const sc=live.order.reduce((s,t)=>s+(+live.teams[t].pts||0),0),fin=live.state==='post'?sc:null;
  const d=(x,y)=>y==null||isNaN(y)?'–':'<b style="color:'+(x-y>=0?'#2e7d32':'#b42318')+'">'+(x-y>0?'+':'')+(x-y).toFixed(1)+'</b>';
  const side=(x,g)=>Math.abs(x-open)>=g?(x>open?'OVER':'UNDER'):'';
- const rows=[['C3-trimmed (Mike)',p.C],['F (Claude)',p.F],['F + C combined',(p.F+p.C)/2]];
+ const rows=[['C3-trimmed (Mike)',p.C],['F (Claude)',p.F],['F + C combined',(p.F+p.C)/2]];if(p.FCc!=null)rows.push(['F + C corrected <small>(tracking)</small>',p.FCc]);
  let h='<div class="pre"><h3 style="margin:2px 0 4px">Models C · F · F+C (pregame, vs the opener)</h3><div class="tblwrap"><table><tr><th></th><th>Model</th><th>vs opener '+f1(open)+'</th><th>vs line now'+(pre?' '+f1(pre):'')+'</th>'+(lt?'<th>vs live total '+f1(lt)+'</th>':'')+'<th>Says</th>'+(fin!=null?'<th>Final '+fin+'</th>':'')+'</tr>';
  for(const [n,v] of rows){const s5=side(v,5),s8=side(v,8);
   const res=fin!=null&&s5?((fin>open)===(s5==='OVER')?'<span style="color:#067647;font-weight:600">win</span>':fin===open?'push':'<span style="color:#b42318;font-weight:600">loss</span>'):'';
   h+='<tr><td>'+n+'</td><td class="big">'+v.toFixed(1)+'</td><td>'+d(v,open)+'</td><td>'+d(v,pre)+'</td>'+(lt?'<td>'+d(v,lt)+'</td>':'')+'<td>'+(s5?'<b>'+s5+'</b> '+(s8?'8+':'5+'):'<span style="color:#888">no bet</span>')+'</td>'+(fin!=null?'<td>'+res+'</td>':'')+'</tr>';}
- h+='</table></div><p class="note">'+(p.side?'<b>Rule bet: '+p.side+' (Tier '+p.tier+')</b>, both models '+(p.tier==='A'?'8+':'5+')+' off the opener on the same side'+(p.price!=null?' · price '+(p.price>0?'+':'')+p.price:'')+'. ':'No rule bet (rule = F and C each 5+ off the opener, same side). ')+'Past two seasons at 5+: C3 overs 54.2% / unders 55.9%; F overs 55.8% / unders 52.6%; F+C overs 55.7% / unders 53.7%; F+C 8+ overs 63.5%. The edge is at the opener; '+(lt?'vs the live total these pregame numbers are for reference only. ':'')+'<a href="picks.html">All picks and records →</a></p></div>';
+ h+='</table></div><p class="note">'+(p.side?'<b>Rule bet: '+p.side+' (Tier '+p.tier+')</b>, both models '+(p.tier==='A'?'8+':'5+')+' off the opener on the same side'+(p.price!=null?' · price '+(p.price>0?'+':'')+p.price:'')+'. ':'No rule bet (rule = F and C each 5+ off the opener, same side). ')+(p.FCc!=null?'Corrected = F and C minus their average miss vs final scores this season (recent 60 game days). ':'')+'Past two seasons at 5+: C3 overs 54.2% / unders 55.9%; F overs 55.8% / unders 52.6%; F+C overs 55.7% / unders 53.7%; F+C 8+ overs 63.5%. The edge is at the opener; '+(lt?'vs the live total these pregame numbers are for reference only. ':'')+'<a href="picks.html">All picks and records →</a></p></div>';
  return h;
 }
 async function loadRatings(lg){
