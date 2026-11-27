@@ -57,7 +57,8 @@ function parseHalves(sum, cfg) {
   const plays = sum.plays || [];
   if (!plays.length) return null;
   const half = per => cfg.periods === 2 ? (per === 1 ? 0 : per === 2 ? 1 : -1) : (per <= 2 ? 0 : per <= 4 ? 1 : -1);
-  const blank = () => ({ pts: 0, tpa: 0, tpm: 0, a2: 0, m2: 0, fta: 0, ftm: 0, orb: 0, tov: 0 });
+  // rim = layups/dunks/tips, jmp = two-point jumpers; blk = blocks made by this team (its opponent's blocked shots)
+  const blank = () => ({ pts: 0, tpa: 0, tpm: 0, a2: 0, m2: 0, fta: 0, ftm: 0, orb: 0, tov: 0, rima: 0, rimm: 0, jmpa: 0, jmpm: 0, blk: 0 });
   const out = {};
   for (const x of plays) {
     const h = half(x.period && x.period.number);
@@ -67,9 +68,11 @@ function parseHalves(sum, cfg) {
     if (x.shootingPlay) {
       const pa = x.pointsAttempted;
       if (pa === 3) { r.tpa++; if (x.scoringPlay) { r.tpm++; r.pts += 3; } }
-      else if (pa === 2) { r.a2++; if (x.scoringPlay) { r.m2++; r.pts += 2; } }
+      else if (pa === 2) { r.a2++; if (x.scoringPlay) { r.m2++; r.pts += 2; }
+        if (/LayUp|Dunk|Tip/i.test(t)) { r.rima++; if (x.scoringPlay) r.rimm++; } else { r.jmpa++; if (x.scoringPlay) r.jmpm++; } }
       else if (pa === 1) { r.fta++; if (x.scoringPlay) { r.ftm++; r.pts += 1; } }
-    } else if (t === 'Offensive Rebound') r.orb++;
+    } else if (t === 'Block Shot') r.blk++;
+    else if (t === 'Offensive Rebound') r.orb++;
     else if (/Turnover/i.test(t)) r.tov++;
   }
   return Object.keys(out).length === 2 ? out : null;
@@ -85,7 +88,8 @@ function compactGame(sum, cfg) {
     const tp = pair(stat(s, ['threePointFieldGoalsMade-threePointFieldGoalsAttempted']));
     const ft = pair(stat(s, ['freeThrowsMade-freeThrowsAttempted']));
     box[String(t.team.id)] = { fgm: fg[0], fga: fg[1], tpm: tp[0], tpa: tp[1], ftm: ft[0], fta: ft[1],
-      orb: num(stat(s, ['offensiveRebounds'])), drb: num(stat(s, ['defensiveRebounds'])), tov: num(stat(s, ['totalTurnovers', 'turnovers'])) };
+      orb: num(stat(s, ['offensiveRebounds'])), drb: num(stat(s, ['defensiveRebounds'])), tov: num(stat(s, ['totalTurnovers', 'turnovers'])),
+      blk: num(stat(s, ['blocks'])), stl: num(stat(s, ['steals'])) };
   });
   const teams = comp.competitors.map(c => {
     const id = String(c.id || c.team.id);
@@ -96,7 +100,7 @@ function compactGame(sum, cfg) {
   if (teams.length !== 2 || teams.some(t => !t || !t.fga)) return null;
   const per = (comp.status && comp.status.period) || cfg.periods;
   return { id: String(sum.header.id), date: comp.date, neutral: !!comp.neutralSite, confGame: !!comp.conferenceCompetition,
-    mins: cfg.mins + Math.max(0, per - cfg.periods) * cfg.ot, teams, lines: parseLines(sum), halves: parseHalves(sum, cfg) };
+    mins: cfg.mins + Math.max(0, per - cfg.periods) * cfg.ot, teams, lines: parseLines(sum), halves: parseHalves(sum, cfg), v: 2 };
 }
 
 async function updateGames(lg, cfg) {
@@ -116,7 +120,7 @@ async function updateGames(lg, cfg) {
         meta[String(e.id)] = { neutral: !!c.neutralSite, confGame: !!c.conferenceCompetition };
         (c.competitors || []).forEach(t => { if (t.team && t.team.conferenceId) confTeams[String(t.team.id)] = t.team.conferenceId; });
       }
-      if (!store.games[e.id] || !store.games[e.id].lines || !('halves' in store.games[e.id])) ids.push(String(e.id));
+      if (!store.games[e.id] || !store.games[e.id].lines || !(store.games[e.id].v >= 2)) ids.push(String(e.id));
     }
   }
   console.log(lg + ': ' + Object.keys(store.games).length + ' cached games, ' + ids.length + ' new to fetch');
