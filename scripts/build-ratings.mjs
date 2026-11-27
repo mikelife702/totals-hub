@@ -8,6 +8,9 @@ import path from 'node:path';
 const LEAGUES = {
   ncaa: { path: 'basketball/mens-college-basketball', extra: '&groups=50&limit=400', start: '2026-10-28', mins: 40, ot: 5, ftc: 0.475, periods: 2, d1Only: true },
   nba:  { path: 'basketball/nba', extra: '', start: '2026-10-18', mins: 48, ot: 5, ftc: 0.44, periods: 4, d1Only: false },
+  // last season, for out-of-sample testing (run by hand: node scripts/build-ratings.mjs ncaa2025 nba2025)
+  ncaa2025: { path: 'basketball/mens-college-basketball', extra: '&groups=50&limit=400', start: '2025-11-03', end: '2026-04-07', mins: 40, ot: 5, ftc: 0.475, periods: 2, d1Only: true, history: true },
+  nba2025:  { path: 'basketball/nba', extra: '', start: '2025-10-21', end: '2026-04-13', mins: 48, ot: 5, ftc: 0.44, periods: 4, d1Only: false, history: true },
 };
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/';
 const HALF_LIFE_DAYS = 30;   // a game this many days old counts half as much as today's
@@ -102,7 +105,8 @@ async function updateGames(lg, cfg) {
   const today = new Date();
   const ids = [];
   const meta = {}, confTeams = {};
-  for (let d = new Date(cfg.start + 'T12:00:00Z'); d < today; d.setUTCDate(d.getUTCDate() + 1)) {
+  const stop = cfg.end ? new Date(cfg.end + 'T12:00:00Z') : today;
+  for (let d = new Date(cfg.start + 'T12:00:00Z'); d < stop; d.setUTCDate(d.getUTCDate() + 1)) {
     const sb = await getJSON(BASE + cfg.path + '/scoreboard?dates=' + ymd(d) + cfg.extra);
     for (const e of (sb && sb.events) || []) {
       const st = e.status && e.status.type;
@@ -506,10 +510,11 @@ export function halftimeModels(games, cfg, lg, cache = {}) {
 
 async function main() {
   fs.mkdirSync(DATA, { recursive: true });
-  const which = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(LEAGUES);
+  const which = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(LEAGUES).filter(k => !LEAGUES[k].history);
   for (const lg of which) {
     const cfg = LEAGUES[lg];
     const store = await updateGames(lg, cfg);
+    if (cfg.history) { console.log(lg + ': history stored (' + Object.keys(store.games).length + ' games, ' + Object.values(store.games).filter(g => g.lines && g.lines.close).length + ' with closing lines)'); continue; }
     const res = computeRatings(Object.values(store.games), cfg);
     fs.writeFileSync(path.join(DATA, lg + '-ratings.json'), JSON.stringify(res));
     const RC = {};
