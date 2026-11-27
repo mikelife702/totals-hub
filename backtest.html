@@ -126,6 +126,19 @@ async function load(lg) {
     h.push(t + '</table></div>');
   }
 
+  const HT = d.halftime;
+  if (HT && HT.games) {
+    h.push('<h2>Halftime: four competing models</h2><p class="note">Every game with play-by-play: at halftime each model projects the 2nd half from the 1st half, then bets over/under vs the 2nd-half line. They share the same base and differ only in what carries forward. ' + esc(HT.lineNote) + ' Real halftime lines so far: ' + HT.realLines + ' of ' + HT.games + '.</p>');
+    h.push('<p class="note"><b>A Catch-up</b>: hot/cold shooting overshoots the other way. <b>B Back to normal</b>: shooting resets to normal. <b>C Data carry-over</b>: what this season measured (pace, threes volume, twos, turnovers, rebounds partly carry). <b>D Possession-heavy</b>: pace, turnovers and off. rebounds keep going.</p>');
+    let t = '<div class="tw"><table><tr><th>Model</th><th>Avg miss</th><th>Gap 1+</th><th>Gap 2+</th><th>Gap 3+</th><th>Gap 5+</th></tr>';
+    HT.models.forEach(m => { t += '<tr><td>' + esc(m.key + ' · ' + m.name) + '</td><td>' + f1(m.mae) + '</td>' + m.bets.map(b => b.n ? '<td class="' + (b.n < 30 ? 'muted' : b.pct >= BE ? 'good' : 'bad') + '">' + b.w + '–' + b.l + ' · ' + b.pct.toFixed(1) + '%</td>' : '<td class="muted">–</td>').join('') + '</tr>'; });
+    t += '<tr class="grp"><td colspan="6">When the models agree</td></tr>';
+    [['All 4 agree', HT.agree.all4], ['3+ agree, none against', HT.agree.three]].forEach(([lab, arr]) => { t += '<tr><td>' + lab + '</td><td></td>' + arr.map(b => b.n ? '<td class="' + (b.n < 30 ? 'muted' : b.pct >= BE ? 'good' : 'bad') + '">' + b.w + '–' + b.l + ' · ' + b.pct.toFixed(1) + '%</td>' : '<td class="muted">–</td>').join('') + '<td class="muted"></td></tr>'; });
+    h.push(t + '</table></div><p class="note">"Gap" = how far the model is from the 2nd-half line. Agreement columns use gaps of 1+, 2+, 3+.</p>');
+    h.push('<h2>What kind of first half?</h2><p class="note">Each first half sorted by why it ran over or under the number: hot/cold shooting (net of second chances) vs pace. Over % = how often the 2nd half went over the 2nd-half line.</p>');
+    h.push('<div class="tw"><table><tr><th>1st half</th><th>Games</th><th>2nd half over %</th><th>2nd half vs line</th></tr>' + HT.types.map(x => '<tr><td>' + esc(x.type) + '</td><td>' + x.n + '</td><td class="' + (x.n < 30 || x.overPct == null ? 'muted' : (x.overPct >= BE || 100 - x.overPct >= BE) ? 'good' : '') + '">' + (x.overPct == null ? '–' : x.overPct.toFixed(1) + '%') + '</td><td>' + sg(x.vsLine) + '</td></tr>').join('') + '</table></div>');
+  }
+
   const rows = (d.rows || []).slice().reverse().slice(0, 60);
   h.push('<h2>Latest games</h2><div class="tw"><table><tr><th>Date</th><th>Game</th><th>Ours</th><th>Open</th><th>Close</th><th>Final</th><th>Gap</th><th>Pick</th><th>Result</th></tr>' +
     rows.map(r => '<tr><td>' + esc(r.day.slice(5)) + '</td><td>' + esc(r.game) + '</td><td>' + f1(r.pred) + '</td><td>' + f1(r.open) + '</td><td>' + f1(r.close) + '</td><td>' + r.final + '</td><td>' + sg(r.diff) + '</td><td>' + r.side + '</td><td class="' + (r.win === true ? 'good' : r.win === false ? 'bad' : 'muted') + '">' + (r.win === true ? 'W' : r.win === false ? 'L' : 'push') + '</td></tr>').join('') + '</table></div>');
