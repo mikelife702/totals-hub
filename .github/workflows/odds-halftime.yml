@@ -12,6 +12,9 @@ on:
       maxdays:
         description: 'Max days to pull this run (999 = all)'
         default: '999'
+      minleft:
+        description: 'Stop when credits left fall below this'
+        default: '35000'
 
 permissions:
   contents: write
@@ -32,6 +35,7 @@ jobs:
       - name: Pull halftime 2nd-half lines
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          MIN_LEFT: ${{ inputs.minleft }}
         run: node scripts/odds-halftime.mjs "${{ inputs.season }}" "${{ inputs.start }}" "${{ inputs.maxdays }}"
       - name: Commit
         if: always()
