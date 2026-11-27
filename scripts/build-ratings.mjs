@@ -179,7 +179,7 @@ export function computeRatings(games, cfg, now = new Date()) {
     const pa = poss(a), pb = poss(b), gp = (pa + pb) / 2;
     if (gp < 30) continue;
     const age = Math.max(0, (now - new Date(g.date)) / 86400000);
-    const w = Math.pow(0.5, age / HALF_LIFE_DAYS);
+    const w = Math.pow(0.5, age / (cfg.halfLife || HALF_LIFE_DAYS));
     const tempo = gp * cfg.mins / g.mins;
     for (const [me, op] of [[a, b], [b, a]]) {
       const isD1 = !cfg.d1Only || !!me.conf;
