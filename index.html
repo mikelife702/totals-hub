@@ -415,7 +415,7 @@ async function loadGames(){
  document.getElementById('games').innerHTML='';
  try{
   const extra=league==='ncaa'?'&groups=50&limit=400':'';
-  const js=await getJSON(BASE+c.path+'/scoreboard?dates='+d+extra);
+  const [js]=await Promise.all([getJSON(BASE+c.path+'/scoreboard?dates='+d+extra),league==='ncaa'?loadPicks(true):null]);
   const evs=js.events||[];
   msg.textContent=evs.length+' games. Tap one to load it.';
   const order={in:0,pre:1,post:2};
@@ -429,7 +429,7 @@ async function loadGames(){
    const pre=st.state==='pre';
    return '<div class="g" id="g'+e.id+'" onclick="openGame(\''+e.id+'\')"><div class="st '+(st.state==='in'?'live':'')+'">'+st.shortDetail+ou+'</div>'+
     '<div class="t"><span>'+away.team.shortDisplayName+'</span><span>'+(pre?'':away.score)+'</span></div>'+
-    '<div class="t"><span>'+home.team.shortDisplayName+'</span><span>'+(pre?'':home.score)+'</span></div></div>';
+    '<div class="t"><span>'+home.team.shortDisplayName+'</span><span>'+(pre?'':home.score)+'</span></div>'+(league==='ncaa'?pickBadge(e.id):'')+'</div>';
   }).join('');
  }catch(e){
   msg.innerHTML='<span class="err">Couldn\'t reach ESPN ('+e.message+'). Check your connection.</span>';
@@ -445,7 +445,7 @@ async function openGame(id){
  const c=CFG[league];
  try{
   const live=await record(league,id,false);
-  await loadRatings(league);
+  await Promise.all([loadRatings(league),league==='ncaa'?loadPicks():null]);
   const saved=cacheGet('lines_'+id)||{};
   cur={lg:league,id,live,hist:{},L:saved.L||(live.dk&&live.dk.close)||live.ou||'',L1:saved.L1||'',line:saved.line||'',h2:saved.h2||'',price:saved.price&&saved.price!=='-110'?saved.price:'',log:saved.log||[]};
   logDK();
@@ -680,7 +680,34 @@ function projBlock(G,P,c){
  return html;
 }
 
-const LGC={},RAT={};
+const LGC={},RAT={};let PK=null;
+async function loadPicks(force){
+ if(PK&&!force)return PK;const get=async f=>{try{const r=await fetch('data/'+f,{cache:'no-cache'});if(r.ok)return await r.json()}catch(e){}return null};
+ const [P,L]=await Promise.all([get('ncaa-picks.json'),get('ncaa-picks-log.json')]);PK={};
+ if(L&&L.picks)for(const p of Object.values(L.picks))PK[p.id]={...p,gapF:p.F-p.line,gapC:p.C-p.line,fromLog:true};
+ if(P&&P.games)for(const g of P.games)if(g.F!=null)PK[g.id]={...(PK[g.id]||{}),...g};
+ return PK;
+}
+function pickBadge(id){
+ const p=PK&&PK[id];if(!p||p.F==null||p.line==null)return'';const FC=(p.F+p.C)/2,gp=FC-p.line;
+ const col=p.tier==='A'||p.tier==='B'?'#067647':'#555';
+ return '<div class="pk" style="font-size:11px;color:'+col+';margin-top:2px">F '+p.F.toFixed(1)+' · C '+p.C.toFixed(1)+' · F+C '+FC.toFixed(1)+' ('+(gp>0?'+':'')+gp.toFixed(1)+')'+(p.side?' · <b>'+p.side+' '+p.tier+'</b>':'')+'</div>';
+}
+function modelsCard(G){
+ const p=PK&&PK[G.id];if(G.lg!=='ncaa')return'';
+ if(!p||p.F==null)return '<div class="pre"><h3 style="margin:2px 0 4px">Models C · F · F+C</h3><p class="note">No model numbers for this game yet (needs both teams with enough games and an opening line; the picks job runs ~4am, 10am, 3pm ET).</p></div>';
+ const live=G.live,open=p.line,pre=+G.L||p.current||null,lt=live.dk&&live.dk.live&&live.state==='in'?+live.dk.live:null;
+ const sc=live.order.reduce((s,t)=>s+(+live.teams[t].pts||0),0),fin=live.state==='post'?sc:null;
+ const d=(x,y)=>y==null||isNaN(y)?'–':'<b style="color:'+(x-y>=0?'#2e7d32':'#b42318')+'">'+(x-y>0?'+':'')+(x-y).toFixed(1)+'</b>';
+ const side=(x,g)=>Math.abs(x-open)>=g?(x>open?'OVER':'UNDER'):'';
+ const rows=[['C3-trimmed (Mike)',p.C],['F (Claude)',p.F],['F + C combined',(p.F+p.C)/2]];
+ let h='<div class="pre"><h3 style="margin:2px 0 4px">Models C · F · F+C (pregame, vs the opener)</h3><div class="tblwrap"><table><tr><th></th><th>Model</th><th>vs opener '+f1(open)+'</th><th>vs line now'+(pre?' '+f1(pre):'')+'</th>'+(lt?'<th>vs live total '+f1(lt)+'</th>':'')+'<th>Says</th>'+(fin!=null?'<th>Final '+fin+'</th>':'')+'</tr>';
+ for(const [n,v] of rows){const s5=side(v,5),s8=side(v,8);
+  const res=fin!=null&&s5?((fin>open)===(s5==='OVER')?'<span style="color:#067647;font-weight:600">win</span>':fin===open?'push':'<span style="color:#b42318;font-weight:600">loss</span>'):'';
+  h+='<tr><td>'+n+'</td><td class="big">'+v.toFixed(1)+'</td><td>'+d(v,open)+'</td><td>'+d(v,pre)+'</td>'+(lt?'<td>'+d(v,lt)+'</td>':'')+'<td>'+(s5?'<b>'+s5+'</b> '+(s8?'8+':'5+'):'<span style="color:#888">no bet</span>')+'</td>'+(fin!=null?'<td>'+res+'</td>':'')+'</tr>';}
+ h+='</table></div><p class="note">'+(p.side?'<b>Rule bet: '+p.side+' (Tier '+p.tier+')</b>, both models '+(p.tier==='A'?'8+':'5+')+' off the opener on the same side'+(p.price!=null?' · price '+(p.price>0?'+':'')+p.price:'')+'. ':'No rule bet (rule = F and C each 5+ off the opener, same side). ')+'Past two seasons at 5+: C3 overs 54.2% / unders 55.9%; F overs 55.8% / unders 52.6%; F+C overs 55.7% / unders 53.7%; F+C 8+ overs 63.5%. The edge is at the opener; '+(lt?'vs the live total these pregame numbers are for reference only. ':'')+'<a href="picks.html">All picks and records →</a></p></div>';
+ return h;
+}
 async function loadRatings(lg){
  if(RAT[lg]!==undefined)return RAT[lg];
  try{const r=await fetch('data/'+lg+'-ratings.json',{cache:'no-cache'});RAT[lg]=r.ok?await r.json():null}catch(e){RAT[lg]=null}
@@ -933,7 +960,7 @@ function render(){
   if(live.state==='in'&&G.dkStale&&!G.line)html+='<div class="warn">ESPN\'s DraftKings line hasn\'t moved while the score did. It looks stale, so it\'s not being used. Type the live line from the DraftKings app.</div>';
  }
  html+='<div class="row"><button onclick="refreshLive()">Refresh live</button><span class="note">Auto-refreshes every 45s while live.</span></div>';
- html+='<div class="wrap"><div>'+preCard(G)+avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div></div>'+sidePanel(G,P,c)+'</div>';
+ html+='<div class="wrap"><div>'+modelsCard(G)+preCard(G)+avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div></div>'+sidePanel(G,P,c)+'</div>';
  const active=document.activeElement&&document.activeElement.id;
  document.getElementById('game').innerHTML=html;
  if(active&&document.getElementById(active))document.getElementById(active).focus();
