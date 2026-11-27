@@ -1,0 +1,189 @@
+{
+ "when": "2026-11-27T22:25:41.103Z",
+ "steps": [
+  {
+   "label": "1) list sports (free)",
+   "status": 200,
+   "creditsThisCall": "0",
+   "creditsUsed": "0",
+   "creditsLeft": "100000"
+  },
+  {
+   "label": "2) historical events list",
+   "status": 200,
+   "creditsThisCall": "1",
+   "creditsUsed": "1",
+   "creditsLeft": "99999"
+  },
+  {
+   "label": "3) historical event markets (pregame)",
+   "status": 200,
+   "creditsThisCall": "1",
+   "creditsUsed": "2",
+   "creditsLeft": "99998"
+  },
+  {
+   "label": "4a) historical event markets (halftime)",
+   "status": 200,
+   "creditsThisCall": "1",
+   "creditsUsed": "3",
+   "creditsLeft": "99997"
+  },
+  {
+   "label": "4b) historical event odds at halftime (totals, totals_h2)",
+   "status": 200,
+   "creditsThisCall": "20",
+   "creditsUsed": "23",
+   "creditsLeft": "99977"
+  }
+ ],
+ "ncaab": {
+  "key": "basketball_ncaab",
+  "group": "Basketball",
+  "title": "NCAAB",
+  "description": "US College Basketball",
+  "active": true,
+  "has_outrights": false
+ },
+ "eventsFound": 155,
+ "sampleEvent": {
+  "id": "aa43f4966340ce210e32547712f173e1",
+  "home": "Appalachian St Mountaineers",
+  "away": "Eastern Michigan Eagles",
+  "commence": "2026-02-07T18:00:00Z"
+ },
+ "pregameMarkets": {
+  "h2h": 9,
+  "spreads": 9,
+  "spreads_h1": 6,
+  "totals": 9,
+  "totals_h1": 6,
+  "alternate_spreads": 6,
+  "alternate_spreads_h1": 3,
+  "alternate_spreads_h2": 1,
+  "alternate_team_totals": 3,
+  "alternate_totals": 6,
+  "alternate_totals_h1": 3,
+  "alternate_totals_h2": 1,
+  "h2h_h1": 5,
+  "h2h_h2": 1,
+  "overtime": 3,
+  "spreads_h2": 1,
+  "team_totals": 3,
+  "team_totals_h1": 2,
+  "team_totals_h2": 1,
+  "totals_h2": 1,
+  "alternate_team_totals_h1": 2,
+  "alternate_team_totals_h2": 1,
+  "h2h_3_way_h2": 1,
+  "halftime_fulltime": 1,
+  "odd_even": 4,
+  "odd_even_h1": 2,
+  "odd_even_h2": 1
+ },
+ "halftimeMarkets": {
+  "alternate_spreads": 2,
+  "alternate_spreads_h2": 1,
+  "alternate_team_totals": 1,
+  "alternate_team_totals_h2": 1,
+  "alternate_totals": 2,
+  "alternate_totals_h2": 1,
+  "h2h": 3,
+  "h2h_3_way": 1,
+  "h2h_3_way_h2": 1,
+  "h2h_h2": 1,
+  "odd_even": 1,
+  "odd_even_h2": 1,
+  "overtime": 1,
+  "spreads": 3,
+  "spreads_h2": 1,
+  "team_totals": 1,
+  "totals": 3,
+  "totals_h2": 1
+ },
+ "halftimeOdds": [
+  {
+   "book": "DraftKings",
+   "updated": "2026-02-07T19:05:17Z",
+   "markets": [
+    {
+     "key": "totals",
+     "updated": "2026-02-07T19:05:17Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "price": -115,
+       "point": 134.5
+      },
+      {
+       "name": "Under",
+       "price": -115,
+       "point": 134.5
+      }
+     ]
+    },
+    {
+     "key": "totals_h2",
+     "updated": "2026-02-07T19:05:28Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "price": -120,
+       "point": 64.5
+      },
+      {
+       "name": "Under",
+       "price": -110,
+       "point": 64.5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "book": "Caesars",
+   "updated": "2026-02-07T19:05:35Z",
+   "markets": [
+    {
+     "key": "totals",
+     "updated": "2026-02-07T19:05:34Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "price": -120,
+       "point": 135.5
+      },
+      {
+       "name": "Under",
+       "price": -110,
+       "point": 135.5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "book": "BetMGM",
+   "updated": "2026-02-07T19:05:19Z",
+   "markets": [
+    {
+     "key": "totals",
+     "updated": "2026-02-07T19:05:18Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "price": -115,
+       "point": 136.5
+      },
+      {
+       "name": "Under",
+       "price": -115,
+       "point": 136.5
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "snapshotTime": "2026-02-07T19:05:37Z"
+}
