@@ -156,6 +156,23 @@ function grade(log, store) {
   log.record = rec;
 }
 
+// ---------- season bias (bias-corrected version) ----------
+// Replays this season day by day with the live models (only earlier games), compares each model with the final score,
+// and returns its average miss (model − final) over the last 60 game days, shrunk toward 0 by 50 games.
+function seasonBias(done) {
+  const withLine = done.filter(g => g.lines && (g.lines.open != null || g.lines.close != null));
+  const days = [...new Set(withLine.map(g => etDay(g.date)))].sort().slice(-60);
+  let sF = 0, sC = 0, n = 0;
+  for (const day of days) {
+    const before = done.filter(g => etDay(g.date) < day), on = withLine.filter(g => etDay(g.date) === day);
+    if (before.length < 200 || !on.length) continue;
+    const F = modelF(before, on, 60), C = modelC(before, on);
+    for (const g of on) { const f = F[g.id], c = C[g.id]; if (f == null || c == null || !isFinite(f) || !isFinite(c)) continue;
+      const fin = g.teams[0].pts + g.teams[1].pts; sF += f - fin; sC += c - fin; n++; }
+  }
+  return { F: n ? sF / (n + 50) : 0, C: n ? sC / (n + 50) : 0, games: n, days: days.length };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === '--test') { // offline check against a saved season
@@ -169,16 +186,16 @@ async function main() {
   const done = Object.values(store).filter(g => g.teams && g.teams.every(t => t.pts != null));
   const today = etDay(new Date().toISOString()), tomorrow = etDay(new Date(Date.now() + 864e5).toISOString());
   const up = await upcomingGames([today, tomorrow]);
-  const F = modelF(done, up, 60), C = modelC(done, up);
-  const games = up.map(g => { const p = pick(g, F[g.id], C[g.id]); return { id: g.id, date: g.date, day: etDay(g.date), away: g.teams.find(t => !t.home) || g.teams[0], home: g.teams.find(t => t.home) || g.teams[1], neutral: g.neutral, conf: g.confGame, book: g.lines && g.lines.book, ...(p || {}) }; })
+  const F = modelF(done, up, 60), C = modelC(done, up), B = seasonBias(done);
+  const games = up.map(g => { const p = pick(g, F[g.id], C[g.id]), corr = p ? { Fc: +(p.F - B.F).toFixed(1), Cc: +(p.C - B.C).toFixed(1), FCc: +(p.FC - (B.F + B.C) / 2).toFixed(1) } : {}; return { id: g.id, date: g.date, day: etDay(g.date), away: g.teams.find(t => !t.home) || g.teams[0], home: g.teams.find(t => t.home) || g.teams[1], neutral: g.neutral, conf: g.confGame, book: g.lines && g.lines.book, ...(p || {}), ...corr }; })
     .sort((x, y) => (x.date < y.date ? -1 : 1));
-  fs.writeFileSync('data/ncaa-picks.json', JSON.stringify({ updated: new Date().toISOString(), rule: 'F and C each 5+ off the opening total, same side (A = both 8+, B = both 5+, C = average 5+ only, track-only)', games }));
+  fs.writeFileSync('data/ncaa-picks.json', JSON.stringify({ updated: new Date().toISOString(), bias: { F: +B.F.toFixed(2), C: +B.C.toFixed(2), games: B.games, days: B.days }, rule: 'F and C each 5+ off the opening total, same side (A = both 8+, B = both 5+, C = average 5+ only, track-only)', games }));
   const logFile = 'data/ncaa-picks-log.json', log = fs.existsSync(logFile) ? JSON.parse(fs.readFileSync(logFile, 'utf8')) : { picks: {} };
   for (const g of games) { if (g.F == null) continue; const old = log.picks[g.id]; if (old && old.result) continue;
     // keep the first-seen opener and model numbers (the bet we would have made), refresh current line
-    log.picks[g.id] = old && old.line != null ? { ...old, current: g.current } : { id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, po: g.po, pu: g.pu, logged: new Date().toISOString() }; }
+    log.picks[g.id] = old && old.line != null ? { ...old, current: g.current } : { id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, po: g.po, pu: g.pu, Fc: g.Fc, Cc: g.Cc, FCc: g.FCc, logged: new Date().toISOString() }; }
   grade(log, store); log.updated = new Date().toISOString();
   fs.writeFileSync(logFile, JSON.stringify(log));
-  console.log('picks: ' + games.length + ' upcoming, ' + games.filter(g => g.tier === 'A' || g.tier === 'B').length + ' rule bets | record ' + JSON.stringify(log.record || {}));
+  console.log('picks: ' + games.length + ' upcoming, ' + games.filter(g => g.tier === 'A' || g.tier === 'B').length + ' rule bets | bias F ' + B.F.toFixed(2) + ' C ' + B.C.toFixed(2) + ' (' + B.games + ' games) | record ' + JSON.stringify(log.record || {}));
 }
 main().catch(e => { console.error(e); process.exit(1); });
