@@ -14,6 +14,8 @@ const LEAGUES = {
   // two seasons ago; game summaries there carry no lines, so totals come from ESPN's core odds feed (ESPN BET)
   ncaa2024: { path: 'basketball/mens-college-basketball', extra: '&groups=50&limit=400', start: '2024-11-04', end: '2025-04-08', mins: 40, ot: 5, ftc: 0.475, periods: 2, d1Only: true, history: true, coreOdds: true },
   nba2024:  { path: 'basketball/nba', extra: '', start: '2024-10-22', end: '2025-04-13', mins: 48, ot: 5, ftc: 0.44, periods: 4, d1Only: false, history: true, coreOdds: true },
+  ncaa2023: { path: 'basketball/mens-college-basketball', extra: '&groups=50&limit=400', start: '2023-11-06', end: '2024-04-09', mins: 40, ot: 5, ftc: 0.475, periods: 2, d1Only: true, history: true, coreOdds: true },
+  nba2023:  { path: 'basketball/nba', extra: '', start: '2023-10-24', end: '2024-04-14', mins: 48, ot: 5, ftc: 0.44, periods: 4, d1Only: false, history: true, coreOdds: true },
 };
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/';
 const HALF_LIFE_DAYS = 30;   // a game this many days old counts half as much as today's
@@ -63,14 +65,17 @@ function parseLines(sum) {
 async function coreLines(cfg, id) {
   const lg = cfg.path.split('/')[1];
   const o = await getJSON('https://sports.core.api.espn.com/v2/sports/basketball/leagues/' + lg + '/events/' + id + '/competitions/' + id + '/odds').catch(() => null);
-  const it = o && o.items && o.items.find(i => i.overUnder && !/live/i.test((i.provider && i.provider.name) || ''));
+  const pre = ((o && o.items) || []).filter(i => i.overUnder && !/live/i.test((i.provider && i.provider.name) || ''));
+  const pref = ['DraftKings', 'ESPN BET', 'Caesars Sportsbook (New Jersey)', 'MGM'];
+  const it = pref.map(n => pre.find(i => i.provider && i.provider.name === n)).find(Boolean) || pre[0];
   if (!it) return { close: null, open: null };
+  const books = {}; pre.forEach(i => { const bo = i.open && i.open.total && parseFloat(i.open.total.alternateDisplayValue); books[i.provider.name] = [isNaN(bo) ? null : bo, +i.overUnder]; });
   const op = it.open && it.open.total && parseFloat(it.open.total.alternateDisplayValue);
   const av = x => { if (!x) return null; const v = String(x.alternateDisplayValue != null ? x.alternateDisplayValue : x.american); if (/pk|even/i.test(v)) return /even/i.test(v) ? 100 : 0; const n = parseFloat(v.replace('+', '')); return isNaN(n) ? null : n; };
   const H = it.homeTeamOdds || {}, A = it.awayTeamOdds || {}, g = (o, k) => o && o[k];
   return { book: (it.provider && it.provider.name) || null, open: isNaN(op) ? null : op, close: +it.overUnder, spread: it.spread != null ? +it.spread : null,
     spreadOpen: av(g(H.open, 'pointSpread')), spreadClose: av(g(H.close, 'pointSpread')), mlHome: [av(g(H.open, 'moneyLine')), av(g(H.close, 'moneyLine'))], mlAway: [av(g(A.open, 'moneyLine')), av(g(A.close, 'moneyLine'))],
-    overOdds: [av(g(it.open, 'over')), av(g(it.close, 'over'))], underOdds: [av(g(it.open, 'under')), av(g(it.close, 'under'))] };
+    overOdds: [av(g(it.open, 'over')), av(g(it.close, 'over'))], underOdds: [av(g(it.open, 'under')), av(g(it.close, 'under'))], books };
 }
 
 // 1st- and 2nd-half team stats from play-by-play (regulation only; NBA halves = Q1-2 / Q3-4)
