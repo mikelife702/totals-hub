@@ -4,11 +4,19 @@
 import fs from 'node:fs';
 const KEY = process.env.ODDS_API_KEY; if (!KEY) { console.log('No ODDS_API_KEY'); process.exit(1); }
 const season = process.argv[2] || 'ncaa2025', START = process.argv[3] || null, MAX_DAYS = +(process.argv[4] || 999);
-const MIN_LEFT = +(process.env.MIN_LEFT || 35000), HT_MIN = +(process.env.HT_MIN || 66);
+const MIN_LEFT = +(process.env.MIN_LEFT || 35000);
 const HOST = 'https://api.the-odds-api.com', SPORT = 'basketball_ncaab';
 const OUT = 'data/' + season + '-h2lines.json';
 const games = Object.values(JSON.parse(fs.readFileSync('data/' + season + '-games.json', 'utf8')).games).filter(g => g.lines && g.lines.close);
-const store = fs.existsSync(OUT) ? JSON.parse(fs.readFileSync(OUT, 'utf8')) : { games: {}, days: {}, log: [] };
+let store = fs.existsSync(OUT) ? JSON.parse(fs.readFileSync(OUT, 'utf8')) : null;
+if (!store || store.v !== 2) store = { v: 2, games: {}, days: {}, log: [] }; // v2: snapshot timed from ESPN's end-of-1st-half clock
+const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary?event=';
+async function halftime(id) { // wall-clock end of 1st half and start of 2nd half from ESPN play-by-play
+  for (let i = 0; i < 3; i++) { try { const r = await fetch(ESPN + id); if (!r.ok) return null; const s = await r.json(); const P = s.plays || [];
+    const end1 = P.filter(p => p.period && p.period.number === 1 && p.wallclock).pop(), st2 = P.find(p => p.period && p.period.number === 2 && p.wallclock);
+    return end1 ? { end1: Date.parse(end1.wallclock), start2: st2 ? Date.parse(st2.wallclock) : null } : null; } catch (e) { await new Promise(s => setTimeout(s, 1000)); } }
+  return null;
+}
 let left = null;
 async function call(path, params) {
   for (let i = 0; i < 4; i++) {
@@ -53,9 +61,11 @@ for (const day of days) {
     const e = matchEvent(g, events);
     if (!e) { store.games[g.id] = { status: 'no match' }; unmatched++; continue; }
     matched++;
-    const snapAt = Date.parse(e.commence_time) + HT_MIN * 60e3;
+    const ht = await halftime(g.id);
+    if (!ht) { store.games[g.id] = { status: 'no halftime clock', oddsId: e.id }; continue; }
+    const snapAt = Math.min(ht.end1 + 8 * 60e3, ht.start2 ? ht.start2 - 60e3 : Infinity);
     let r = await call('/v4/historical/sports/' + SPORT + '/events/' + e.id + '/odds', { date: iso(snapAt), regions: 'us', markets: 'totals_h2', oddsFormat: 'american' }); calls++;
-    const rec = { status: 'ok', oddsId: e.id, home: e.home_team, away: e.away_team, commence: e.commence_time, snap: r && r.timestamp, books: {} };
+    const rec = { status: 'ok', oddsId: e.id, home: e.home_team, away: e.away_team, commence: e.commence_time, end1: new Date(ht.end1).toISOString(), start2: ht.start2 ? new Date(ht.start2).toISOString() : null, asked: iso(snapAt), snap: r && r.timestamp, books: {} };
     const take = (resp, key) => ((resp && resp.data && resp.data.bookmakers) || []).forEach(b => (b.markets || []).forEach(m => { if (m.key !== key) return;
       const o = m.outcomes.find(x => x.name === 'Over'), u = m.outcomes.find(x => x.name === 'Under'); if (!o || !u) return;
       (rec.books[b.key] = rec.books[b.key] || {})[key] = [o.point, o.price, u.price, m.last_update]; }));
