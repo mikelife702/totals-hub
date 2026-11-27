@@ -227,8 +227,9 @@ export function computeRatings(games, cfg, now = new Date()) {
     const rs = byTeam[id];
     const split = pick => {
       const sel = rs.filter(pick); if (!sel.length) return null;
-      const o = wavg(sel, r => r.o * lg.eff / R[r.opp].d), d = wavg(sel, r => r.d * lg.eff / R[r.opp].o);
-      return { g: sel.length, o: +o.toFixed(4), d: +d.toFixed(4) };
+      const o = wavg(sel, r => r.o * lg.eff / R[r.opp].d), d = wavg(sel, r => r.d * lg.eff / R[r.opp].o), tt = wavg(sel, r => r.tempo * lg.tempo / R[r.opp].t);
+      // ro/rd/rt = what actually happened in these games (no strength-of-schedule formula)
+      return { g: sel.length, o: +o.toFixed(4), d: +d.toFixed(4), t: +tt.toFixed(2), ro: +wavg(sel, r => r.o).toFixed(4), rd: +wavg(sel, r => r.d).toFixed(4), rt: +wavg(sel, r => r.tempo).toFixed(2) };
     };
     const t = R[id];
     out[id] = {
@@ -236,7 +237,11 @@ export function computeRatings(games, cfg, now = new Date()) {
       o: +t.o.toFixed(4), d: +t.d.toFixed(4), em: +((t.o - t.d) * 100).toFixed(2), t: +t.t.toFixed(2),
       f: Object.fromEntries(FACT.flatMap(k => [['o_' + k, +t['o_' + k].toFixed(4)], ['d_' + k, +t['d_' + k].toFixed(4)]])),
       ftp: +(shrink(rs.reduce((s, r) => s + (r.ftp != null ? r.w * r.ftp * Math.min(1, r.ftaN / 15) : 0), 0), rs.reduce((s, r) => s + (r.ftp != null ? r.w * Math.min(1, r.ftaN / 15) : 0), 0), lg.ftp, PRIOR_GAMES_PCT)).toFixed(4),
-      splits: { conf: split(r => r.conf), nonconf: split(r => !r.conf), top50: split(r => rank[r.opp] && rank[r.opp] <= 50), rest: split(r => !(rank[r.opp] && rank[r.opp] <= 50)) },
+      splits: { conf: split(r => r.conf), nonconf: split(r => !r.conf), top25: split(r => rank[r.opp] && rank[r.opp] <= 25),
+        top50: split(r => rank[r.opp] && rank[r.opp] <= 50), rest: split(r => !(rank[r.opp] && rank[r.opp] <= 50)),
+        home: split(r => r.loc === 1), away: split(r => r.loc === -1), neutral: split(r => r.loc === 0),
+        tier25: split(r => rank[r.opp] && rank[r.opp] <= 25), tier50: split(r => rank[r.opp] > 25 && rank[r.opp] <= 50),
+        tier100: split(r => rank[r.opp] > 50 && rank[r.opp] <= 100), tierRest: split(r => !(rank[r.opp] <= 100)) },
       last5: split(r => rs.slice().sort((x, y) => new Date(y.date) - new Date(x.date)).slice(0, 5).includes(r)),
     };
   }
@@ -248,7 +253,7 @@ export function computeRatings(games, cfg, now = new Date()) {
 // ---------- season replay (walk-forward) ----------
 // For each day, rate teams using only games played before that day, predict each game's total,
 // and compare with the DraftKings closing line and the final score.
-export function backtest(games, cfg) {
+export function backtest(games, cfg, cache = {}) {
   const etDay = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
   const byDay = {};
   games.forEach(g => { (byDay[etDay(g.date)] = byDay[etDay(g.date)] || []).push(g); });
@@ -259,7 +264,7 @@ export function backtest(games, cfg) {
     if (!todays.length) continue;
     const train = games.filter(g => etDay(g.date) < day);
     if (train.length < 50) continue;
-    const R = computeRatings(train, cfg, new Date(day + 'T12:00:00Z'));
+    const R = cache[day] !== undefined ? cache[day] : (cache[day] = computeRatings(train, cfg, new Date(day + 'T12:00:00Z')));
     for (const g of todays) {
       const [a, b] = g.teams, ra = R.ratings[a.id], rb = R.ratings[b.id];
       if (!ra || !rb || ra.games < 3 || rb.games < 3) continue;
@@ -335,13 +340,13 @@ export const HT_MODELS = {
   },
 };
 
-export function halftimeModels(games, cfg, lg) {
+export function halftimeModels(games, cfg, lg, cache = {}) {
   const M = HT_MODELS[lg], min3 = lg === 'nba' ? 10 : 8, min2 = lg === 'nba' ? 14 : 10, ftc = cfg.ftc;
   const reg = games.filter(g => g.halves && g.mins === cfg.mins);
   const hp = r => r.tpa + r.a2 + ftc * r.fta - r.orb + r.tov;
-  // season sums per team (full-game box), used leave-one-out
+  const etDay = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
+  // ---- normals type 1 ("raw"): season box-score averages, offense x opponent defense / league, this game left out
   const box = t => ({ n: 1, poss: t.fga - t.orb + ftc * t.fta + t.tov, pts: t.pts, fga: t.fga, fgm: t.fgm, tpa: t.tpa, tpm: t.tpm, a2: t.fga - t.tpa, m2: t.fgm - t.tpm, tov: t.tov, orb: t.orb });
-  // offense sums (own box) and defense sums (what opponents did against them), used leave-one-out
   const off = {}, def = {}, lgS = {};
   const add = (a, b, k) => { for (const x in b) a[x] = (a[x] || 0) + k * b[x]; };
   games.filter(g => g.mins === cfg.mins).forEach(g => g.teams.forEach((t, i) => {
@@ -354,45 +359,89 @@ export function halftimeModels(games, cfg, lg) {
   const mx = (o, d, l) => o * d / l;   // matchup: offense x opponent defense / league
   const stat = S => ({ pace: S.poss / S.n, fpt: S.fga / S.poss, r3: S.tpa / S.poss, p3: (S.tpm + 60 * lg3) / (S.tpa + 60), p2: (S.m2 + 60 * lg2) / (S.a2 + 60),
     tov: S.tov / S.poss, orb: S.orb / Math.max(1, S.fga - S.fgm), ppp: S.pts / S.poss, fg: S.fgm / S.fga });
+  const rawNormals = g => {
+    const N = [];
+    for (let i = 0; i < 2; i++) {
+      const t = g.teams[i], u = g.teams[1 - i];
+      const O = Object.assign({}, off[t.id]); add(O, box(t), -1);
+      const D = Object.assign({}, def[u.id]); add(D, box(t), -1);
+      if (!(O.n >= 4) || !(D.n >= 4) || O.poss <= 0 || D.poss <= 0) return null;
+      const so = stat(O), sd = stat(D);
+      N.push({ pN: so.pace, pD: sd.pace, fpt: mx(so.fpt, sd.fpt, L.fpt), r3n: mx(so.r3, sd.r3, L.r3), fgN: mx(so.fg, sd.fg, L.fg),
+        p3n: mx(so.p3, sd.p3, L.p3), p2n: mx(so.p2, sd.p2, L.p2), tovN: mx(so.tov, sd.tov, L.tov), orbN: mx(so.orb, sd.orb, L.orb), pppN: mx(so.ppp, sd.ppp, L.ppp) });
+    }
+    return { N, mPace: (mx(N[0].pN, N[1].pD, L.pace) + mx(N[1].pN, N[0].pD, L.pace)) / 2 };
+  };
+  // ---- normals type 2 ("adjusted"): the opponent-adjusted, recency-weighted, home/away ratings as they stood the day before
+  const ratingsFor = day => {
+    if (!(day in cache)) {
+      const train = games.filter(g => etDay(g.date) < day);
+      cache[day] = train.length >= 50 ? computeRatings(train, cfg, new Date(day + 'T12:00:00Z')) : null;
+    }
+    return cache[day];
+  };
+  const adjNormals = g => {
+    const R = ratingsFor(etDay(g.date));
+    if (!R) return null;
+    const Lg = R.lg, N = [];
+    for (let i = 0; i < 2; i++) {
+      const t = g.teams[i], u = g.teams[1 - i], A = R.ratings[t.id], B = R.ratings[u.id];
+      if (!A || !B || A.games < 3 || B.games < 3) return null;
+      const k = key => A.f['o_' + key] * B.f['d_' + key] / Lg[key];
+      const tpar = k('tpar'), tp = k('tp'), p2 = k('p2'), tov = k('tov'), orb = k('orb'), ftr = k('ftr');
+      const fg = tpar * tp + (1 - tpar) * p2;
+      const fpt = (1 - tov) / (1 - orb * (1 - fg) + ftc * ftr);   // field-goal tries per trip, from the trip identity
+      const hf = g.neutral ? 1 : (t.home ? 1 + HCA : 1 - HCA);
+      N.push({ fpt, r3n: fpt * tpar, fgN: fg, p3n: tp, p2n: p2, tovN: tov, orbN: orb, pppN: A.o * B.d / Lg.eff * hf });
+    }
+    const a = R.ratings[g.teams[0].id], b = R.ratings[g.teams[1].id];
+    return { N, mPace: a.t * b.t / Lg.tempo * cfg.mins / cfg.mins };
+  };
+  // ---- normals type 3 ("similar opponents", Mike): what each team ACTUALLY did against opponents like tonight's,
+  // no strength-of-schedule formula. Tier = opponent rank 1-25 / 26-50 / 51-100 / 100+, plus conference-or-not and home/away/neutral.
+  // My offense vs teams in the opponent's tier, averaged with the opponent's defense vs teams in my tier; same for pace.
+  // Blended with the adjusted rating by sample size: weight = similar games / (similar games + 4).
+  const SIM_K = 4;
+  const tierKey = rank => !rank ? 'tierRest' : rank <= 25 ? 'tier25' : rank <= 50 ? 'tier50' : rank <= 100 ? 'tier100' : 'tierRest';
+  const simPick = (r, conf, oppRank, loc) => {
+    const S = r.splits || {};
+    return [S[tierKey(oppRank)], conf ? S.conf : S.nonconf, loc === 1 ? S.home : loc === -1 ? S.away : S.neutral].filter(x => x && x.g > 0 && x.ro != null);
+  };
+  const simAvg = (pick, k) => { const G = pick.reduce((s, x) => s + x.g, 0); return G ? { v: pick.reduce((s, x) => s + x.g * x[k], 0) / G, n: pick[0].g } : null; };
+  const sitNormals = g => {
+    const base = adjNormals(g);
+    if (!base) return null;
+    const R = ratingsFor(etDay(g.date)), a = R.ratings[g.teams[0].id], b = R.ratings[g.teams[1].id];
+    const locA = g.neutral ? 0 : (g.teams[0].home ? 1 : -1);
+    const pa = simPick(a, g.confGame, b.rank, locA), pb = simPick(b, g.confGame, a.rank, -locA);
+    const mix = (adj, x, y) => { if (!x || !y) return adj; const n = Math.min(x.n, y.n), w = n / (n + SIM_K); return (1 - w) * adj + w * (x.v + y.v) / 2; };
+    const N = base.N.map((n, i) => {
+      const off = simAvg(i === 0 ? pa : pb, 'ro'), dfn = simAvg(i === 0 ? pb : pa, 'rd');
+      return Object.assign({}, n, { pppN: mix(n.pppN, off, dfn) });
+    });
+    return { N, mPace: mix(base.mPace, simAvg(pa, 'rt'), simAvg(pb, 'rt')) };
+  };
   let P1 = 0, P2 = 0, Q1 = 0, Q2 = 0;
   reg.forEach(g => Object.values(g.halves).forEach(([a, b]) => { P1 += a.pts; P2 += b.pts; Q1 += hp(a); Q2 += hp(b); }));
   const share2 = P2 / (P1 + P2), possShare1 = Q1 / (Q1 + Q2);
-  const rows = [];
-  for (const g of reg) {
-    if (!g.lines || !g.lines.close) continue;
-    const N = [];
-    let ok = true;
-    for (let i = 0; i < 2; i++) {
-      const t = g.teams[i], u = g.teams[1 - i];
-      const O = Object.assign({}, off[t.id]); add(O, box(t), -1);   // my offense, this game removed
-      const D = Object.assign({}, def[u.id]); add(D, box(t), -1);   // opponent's defense, this game removed
-      const h = g.halves[t.id];
-      if (!h || !(O.n >= 4) || !(D.n >= 4) || O.poss <= 0 || D.poss <= 0) { ok = false; break; }
-      const so = stat(O), sd = stat(D);
-      N.push({ t, h1: h[0], h2: h[1], pN: so.pace, pD: sd.pace, fpt: mx(so.fpt, sd.fpt, L.fpt), r3n: mx(so.r3, sd.r3, L.r3), fgN: mx(so.fg, sd.fg, L.fg),
-        p3n: mx(so.p3, sd.p3, L.p3), p2n: mx(so.p2, sd.p2, L.p2), tovN: mx(so.tov, sd.tov, L.tov), orbN: mx(so.orb, sd.orb, L.orb), pppN: mx(so.ppp, sd.ppp, L.ppp) });
-    }
-    if (!ok) continue;
-    const line2 = g.lines.h2 != null ? g.lines.h2 : Math.round(g.lines.close * share2 * 2) / 2;
-    const real = g.lines.h2 != null;
-    const mPace = (mx(N[0].pN, N[1].pD, L.pace) + mx(N[1].pN, N[0].pD, L.pace)) / 2;
-    const exp1 = mPace * possShare1, exp2 = mPace * (1 - possShare1);
+  // run the four models for one game with one set of normals
+  const evalGame = (g, NN, line2) => {
+    const N = NN.N.map((n, i) => {
+      const h = g.halves[g.teams[i].id], x = Object.assign({ t: g.teams[i], h1: h[0], h2: h[1] }, n);
+      const p1 = hp(x.h1);
+      x.gap3 = x.h1.tpa >= min3 ? x.h1.tpm / x.h1.tpa - x.p3n : 0;
+      x.gap2 = x.h1.a2 >= min2 ? x.h1.m2 / x.h1.a2 - x.p2n : 0;
+      x.rate3l = p1 > 0 ? x.h1.tpa / p1 : x.r3n;
+      x.tovL = p1 > 0 ? x.h1.tov / p1 : x.tovN;
+      const miss1 = x.h1.tpa - x.h1.tpm + x.h1.a2 - x.h1.m2;
+      x.orbL = miss1 > 0 ? x.h1.orb / miss1 : x.orbN;
+      return x;
+    });
+    const exp1 = NN.mPace * possShare1, exp2 = NN.mPace * (1 - possShare1);
     const trips1 = (hp(N[0].h1) + hp(N[1].h1)) / 2, paceGap = trips1 / exp1 - 1;
-    const pts1 = N[0].h1.pts + N[1].h1.pts, pts2 = N[0].h2.pts + N[1].h2.pts;
     const margin = Math.abs(N[0].h1.pts - N[1].h1.pts);
-    // shooting luck in the 1st half, net of the second chances a miss usually brings
     let luck = 0;
-    for (const n of N) {
-      const back = n.orbN * n.pppN, p1 = hp(n.h1);
-      n.p1 = p1;
-      n.gap3 = n.h1.tpa >= min3 ? n.h1.tpm / n.h1.tpa - n.p3n : 0;
-      n.gap2 = n.h1.a2 >= min2 ? n.h1.m2 / n.h1.a2 - n.p2n : 0;
-      n.rate3l = p1 > 0 ? n.h1.tpa / p1 : n.r3n;
-      n.tovL = p1 > 0 ? n.h1.tov / p1 : n.tovN;
-      const miss1 = n.h1.tpa - n.h1.tpm + n.h1.a2 - n.h1.m2;
-      n.orbL = miss1 > 0 ? n.h1.orb / miss1 : n.orbN;
-      luck += (n.h1.tpm - n.h1.tpa * n.p3n) * (3 - back) + (n.h1.m2 - n.h1.a2 * n.p2n) * (2 - back);
-    }
+    for (const n of N) { const back = n.orbN * n.pppN; luck += (n.h1.tpm - n.h1.tpa * n.p3n) * (3 - back) + (n.h1.m2 - n.h1.a2 * n.p2n) * (2 - back); }
     const preds = {};
     for (const [key, m] of Object.entries(M)) {
       const paceAdj = 1 + m.pace * paceGap, trips2 = exp2 * paceAdj;
@@ -406,19 +455,30 @@ export function halftimeModels(games, cfg, lg) {
       if (m.margin && lg === 'ncaa') pred *= margin <= 8 ? 1.02 : margin >= 15 ? 0.98 : 1;
       preds[key] = pred;
     }
-    const d1 = pts1 - g.lines.close * (1 - share2), paceP = paceGap * g.lines.close * (1 - share2);
-    const type = d1 >= 3 ? (luck > paceP ? 'over · hot shooting' : 'over · pace') : d1 <= -3 ? (luck < paceP ? 'under · cold shooting' : 'under · slow pace') : 'near the number';
-    rows.push({ id: g.id, day: g.date.slice(0, 10), game: N[0].t.abbr + ' v ' + N[1].t.abbr, line2, real, pts2, preds, type, d1: +d1.toFixed(1), luck: +luck.toFixed(1), paceGap: +(paceGap * 100).toFixed(1) });
+    return { preds, luck, paceGap, N };
+  };
+  const rows = [];
+  for (const g of reg) {
+    if (!g.lines || !g.lines.close || !g.teams.every(t => g.halves[t.id])) continue;
+    const NA = adjNormals(g), NR = rawNormals(g), NS = sitNormals(g);
+    if (!NA || !NR || !NS) continue;
+    const line2 = g.lines.h2 != null ? g.lines.h2 : Math.round(g.lines.close * share2 * 2) / 2;
+    const A = evalGame(g, NA, line2), Rw = evalGame(g, NR, line2), Sw = evalGame(g, NS, line2);
+    const pts1 = A.N[0].h1.pts + A.N[1].h1.pts, pts2 = A.N[0].h2.pts + A.N[1].h2.pts;
+    const d1 = pts1 - g.lines.close * (1 - share2), paceP = A.paceGap * g.lines.close * (1 - share2);
+    const type = d1 >= 3 ? (A.luck > paceP ? 'over · hot shooting' : 'over · pace') : d1 <= -3 ? (A.luck < paceP ? 'under · cold shooting' : 'under · slow pace') : 'near the number';
+    rows.push({ id: g.id, day: g.date.slice(0, 10), game: g.teams[0].abbr + ' v ' + g.teams[1].abbr, line2, real: g.lines.h2 != null, pts2,
+      preds: A.preds, predsRaw: Rw.preds, predsSit: Sw.preds, type, d1: +d1.toFixed(1), luck: +A.luck.toFixed(1), paceGap: +(A.paceGap * 100).toFixed(1) });
   }
   const rec = rs => {
     const w = rs.filter(r => r.win === true).length, l = rs.filter(r => r.win === false).length;
     return { n: w + l, w, l, pct: w + l ? +(100 * w / (w + l)).toFixed(1) : null, roi: w + l ? +(100 * (w * 100 / 110 - l) / (w + l)).toFixed(1) : null };
   };
   const bet = (r, pred) => r.pts2 === r.line2 ? null : (pred > r.line2) === (r.pts2 > r.line2);
-  const models = Object.entries(M).map(([key, m]) => ({
+  const summary = field => Object.entries(M).map(([key, m]) => ({
     key, ...m,
-    mae: rows.length ? +(rows.reduce((s, r) => s + Math.abs(r.pts2 - r.preds[key]), 0) / rows.length).toFixed(2) : null,
-    bets: [1, 2, 3, 5].map(T => ({ T, ...rec(rows.filter(r => Math.abs(r.preds[key] - r.line2) >= T).map(r => ({ win: bet(r, r.preds[key]) }))) })),
+    mae: rows.length ? +(rows.reduce((s, r) => s + Math.abs(r.pts2 - r[field][key]), 0) / rows.length).toFixed(2) : null,
+    bets: [1, 2, 3, 5].map(T => ({ T, ...rec(rows.filter(r => Math.abs(r[field][key] - r.line2) >= T).map(r => ({ win: bet(r, r[field][key]) }))) })),
   }));
   const keys = Object.keys(M);
   const agree = (need, T) => rec(rows.map(r => {
@@ -435,11 +495,12 @@ export function halftimeModels(games, cfg, lg) {
   });
   return {
     games: rows.length, realLines: rows.filter(r => r.real).length, share2: +(share2 * 100).toFixed(1),
-    normals: 'Matchup normals: each team\'s offense x the opponent\'s defense / league (season to date, this game left out).',
+    normals: 'Adjusted normals: opponent-adjusted, recency-weighted, home/away ratings as of the day before each game; offense x the opponent\'s defense / league.',
     lineNote: 'Stand-in 2nd-half line = closing total x the league 2nd-half share, until real halftime lines are logged.',
-    models, agree: { all4: [1, 2, 3].map(T => ({ T, ...agree(4, T) })), three: [1, 2, 3].map(T => ({ T, ...agree(3, T) })) },
+    models: summary('preds'), modelsRaw: summary('predsRaw'), modelsSit: summary('predsSit'),
+    agree: { all4: [1, 2, 3].map(T => ({ T, ...agree(4, T) })), three: [1, 2, 3].map(T => ({ T, ...agree(3, T) })) },
     types,
-    rows: rows.slice(-150).map(r => ({ ...r, preds: Object.fromEntries(Object.entries(r.preds).map(([k, v]) => [k, +v.toFixed(1)])) })),
+    rows: rows.slice(-150).map(r => ({ ...r, preds: Object.fromEntries(Object.entries(r.preds).map(([k, v]) => [k, +v.toFixed(1)])), predsRaw: undefined, predsSit: undefined })),
   };
 }
 
@@ -451,8 +512,9 @@ async function main() {
     const store = await updateGames(lg, cfg);
     const res = computeRatings(Object.values(store.games), cfg);
     fs.writeFileSync(path.join(DATA, lg + '-ratings.json'), JSON.stringify(res));
-    const bt = backtest(Object.values(store.games), cfg);
-    try { bt.halftime = halftimeModels(Object.values(store.games), cfg, lg); console.log(lg + ' halftime models: ' + bt.halftime.games + ' games; ' + bt.halftime.models.map(m => m.name + ' ' + JSON.stringify(m.bets[1])).join(' | ')); }
+    const RC = {};
+    const bt = backtest(Object.values(store.games), cfg, RC);
+    try { bt.halftime = halftimeModels(Object.values(store.games), cfg, lg, RC); console.log(lg + ' halftime models: ' + bt.halftime.games + ' games; ' + bt.halftime.models.map(m => m.name + ' ' + JSON.stringify(m.bets[1])).join(' | ')); }
     catch (e) { console.error('halftime models failed', e); }
     fs.writeFileSync(path.join(DATA, lg + '-backtest.json'), JSON.stringify(bt));
     console.log(lg + ' replay: ' + bt.games + ' games, all ' + JSON.stringify(bt.all) + ', buckets ' + JSON.stringify(bt.buckets) + ', line moves ' + JSON.stringify(bt.lineMove) + ', accuracy ' + JSON.stringify(bt.accuracy));
