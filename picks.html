@@ -50,6 +50,7 @@ Past three seasons (opener, real prices): rule 57.6% (761 bets, +9% return). <b>
 <div class="cards" id="rec"></div>
 
 <h2>Each model on its own · over vs under</h2>
+<p class="note" id="biasnote"></p>
 <p class="note">Every game with a line and both models, graded at the opener. A model "bets" when its own number is 5+ (or 8+) off the opener; the combined row uses the average of F and C. Forward = this season, logged before tip-off (real price when saved, else −110). Past = 2024–25 + 2025–26 backtest at real prices.</p>
 <div class="tw"><table id="mods"><thead><tr><th>Model</th><th>Gap</th><th>Over · forward</th><th>Under · forward</th><th>All · forward</th><th>Over · past</th><th>Under · past</th></tr></thead><tbody></tbody></table></div>
 
@@ -77,6 +78,7 @@ async function load() {
   days.forEach(d => { const b = document.createElement('button'); b.textContent = new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' (' + P.games.filter(g => g.day === d && (g.tier === 'A' || g.tier === 'B')).length + ' bets)'; b.onclick = () => { DAY = d; draw(); }; b.dataset.d = d; dv.appendChild(b); });
   document.getElementById('upd').textContent = 'Updated ' + new Date(P.updated).toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET · lines: ' + ([...new Set(P.games.map(g => g.book).filter(Boolean))].join(', ') || '–');
   document.getElementById('all').onclick = () => { ALL = !ALL; document.getElementById('all').textContent = ALL ? 'Show bets only' : 'Show all games'; draw(); };
+  if (P.bias) document.getElementById('biasnote').innerHTML = '<b>Bias correction now:</b> F runs ' + (P.bias.F >= 0 ? '+' : '') + P.bias.F.toFixed(1) + ', C ' + (P.bias.C >= 0 ? '+' : '') + P.bias.C.toFixed(1) + ' pts vs final scores this season (' + P.bias.games + ' games). The corrected row subtracts these; tracked only, not bet.';
   record(); models(); draw(); logTable();
 }
 function record() {
@@ -92,13 +94,13 @@ const PAST = { 'C3-trimmed (Mike)|5': ['601–507 · 54.2%', '105–83 · 55.9%'
 function models() {
   const L = LOG ? Object.values(LOG.picks).filter(p => p.final != null && p.line != null && p.F != null && p.C != null) : [];
   const pay = o => o == null ? 100 / 110 : (o > 0 ? o / 100 : 100 / -o);
-  const M = [['C3-trimmed (Mike)', p => p.C], ['F (Claude)', p => p.F], ['F + C combined', p => (p.F + p.C) / 2]];
+  const M = [['C3-trimmed (Mike)', p => p.C], ['F (Claude)', p => p.F], ['F + C combined', p => (p.F + p.C) / 2], ['F + C corrected (tracking)', p => p.FCc]];
   const cell = r => { const n = r.w + r.l; if (!n) return '<span class="muted">0–0</span>'; const pct = 100 * r.w / n;
     return r.w + '–' + r.l + ' · <span class="' + (pct >= 52.4 ? 'good' : 'bad') + '">' + pct.toFixed(1) + '%</span> <span class="muted">(' + (r.u >= 0 ? '+' : '') + r.u.toFixed(1) + 'u)</span>'; };
   let html = '';
   for (const [name, f] of M) for (const gap of [5, 8]) {
     const o = { w: 0, l: 0, u: 0 }, un = { w: 0, l: 0, u: 0 };
-    for (const p of L) { const d = f(p) - p.line; if (Math.abs(d) < gap || p.final === p.line) continue; const over = d > 0, r = over ? o : un, win = (p.final > p.line) === over;
+    for (const p of L) { if (f(p) == null) continue; const d = f(p) - p.line; if (Math.abs(d) < gap || p.final === p.line) continue; const over = d > 0, r = over ? o : un, win = (p.final > p.line) === over;
       if (win) { r.w++; r.u += pay(over ? p.po : p.pu); } else { r.l++; r.u -= 1; } }
     const all = { w: o.w + un.w, l: o.l + un.l, u: o.u + un.u }, past = PAST[name + '|' + gap] || ['–', '–'];
     html += '<tr' + (gap === 8 ? ' style="border-bottom:2px solid #ccc"' : '') + '><td>' + (gap === 5 ? '<b>' + name + '</b>' : '') + '</td><td>' + gap + '+</td><td>' + cell(o) + '</td><td>' + cell(un) + '</td><td>' + cell(all) + '</td><td class="muted">' + past[0] + '</td><td class="muted">' + past[1] + '</td></tr>';
