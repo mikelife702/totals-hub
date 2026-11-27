@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Today's Picks · Totals Hub</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#fff;color:#111;font-size:15px}
+header{background:#1f3a5f;color:#fff;padding:12px 14px}
+header h1{margin:0;font-size:18px;font-weight:600}
+header .sub{font-size:12px;opacity:.85;margin-top:2px}
+header a{color:#fff}
+main{padding:12px 10px;max-width:1100px;margin:0 auto}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+button{font:inherit;padding:8px 12px;border:1px solid #1f3a5f;background:#fff;color:#1f3a5f;border-radius:6px;cursor:pointer}
+button.on{background:#1f3a5f;color:#fff}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin:10px 0}
+.card{background:#f4f6f9;border-radius:8px;padding:9px 11px}
+.card .l{font-size:12px;color:#555}
+.card .v{font-size:21px;font-weight:600}
+.card .s{font-size:12px;color:#666}
+h2{font-size:16px;margin:20px 0 4px}
+.note{font-size:13px;color:#555;margin:0 0 8px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;white-space:nowrap}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+th{font-size:12px;color:#555;font-weight:600;background:#fafafa}
+.good{color:#067647;font-weight:600}
+.bad{color:#b42318;font-weight:600}
+.muted{color:#888}
+.warn{background:#fff8e6;border:1px solid #f5d48a;border-radius:8px;padding:9px 11px;font-size:13px;margin:10px 0}
+tr.A td{background:#e7f6ec}
+tr.B td{background:#f1faf3}
+.tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:12px;font-weight:600}
+.tA{background:#067647;color:#fff}.tB{background:#3e9a63;color:#fff}.tC{background:#e5e7eb;color:#444}
+</style>
+</head>
+<body>
+<header>
+<h1>Today's picks · college totals</h1>
+<div class="sub">Model F (Claude) + Model C3-trimmed (Mike) vs the opening total · updated by the nightly job and twice during the day · <a href="./">← Back to hub</a> · <a href="backtest.html">Season replay</a></div>
+</header>
+<main>
+<div class="warn"><b>Rule:</b> bet when <b>F and C are each 5+ points off the opening total, on the same side</b>. Tier A = both 8+, Tier B = both 5+. Tier C (only the average is 5+) is tracked, not bet.
+Past three seasons (opener, real prices): rule 57.6% (761 bets, +9% return). <b>Not proven forward yet</b>: track first, small stakes only after ~300 forward bets at 55%+. Edge is at the opener; once the line moves to our number it's gone.</div>
+
+<h2>Forward record (logged before tip-off)</h2>
+<div class="cards" id="rec"></div>
+
+<div class="row" id="days"></div>
+<div class="tw"><table id="tbl"><thead><tr><th>Time (ET)</th><th>Game</th><th>Open</th><th>Now</th><th>F</th><th>C</th><th>Avg</th><th>F gap</th><th>C gap</th><th>Pick</th><th>Price</th></tr></thead><tbody></tbody></table></div>
+<p class="note" id="upd"></p>
+<div class="row"><button id="all">Show all games</button></div>
+
+<h2>Graded picks</h2>
+<p class="note">Every rule bet and tracked game, with the opener and model numbers as they were before tip-off.</p>
+<div class="tw"><table id="logt"><thead><tr><th>Day</th><th>Game</th><th>Line</th><th>F</th><th>C</th><th>Pick</th><th>Final</th><th>Result</th><th>Units</th></tr></thead><tbody></tbody></table></div>
+</main>
+<script>
+let P = null, LOG = null, DAY = null, ALL = false;
+const fmt = (v, d = 1) => v == null || isNaN(v) ? '–' : (+v).toFixed(d);
+const sg = v => v == null ? '–' : (v > 0 ? '+' : '') + (+v).toFixed(1);
+const et = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+const tag = t => t ? '<span class="tag t' + t + '">' + t + '</span>' : '';
+async function load() {
+  const get = async f => { try { const r = await fetch('data/' + f, { cache: 'no-cache' }); if (r.ok) return await r.json(); } catch (e) {} return null; };
+  P = await get('ncaa-picks.json'); LOG = await get('ncaa-picks-log.json');
+  if (!P) { document.getElementById('upd').textContent = 'No picks file yet — it appears after the next nightly run.'; return; }
+  const days = [...new Set(P.games.map(g => g.day))].sort(); DAY = days[0];
+  const dv = document.getElementById('days'); dv.innerHTML = '';
+  days.forEach(d => { const b = document.createElement('button'); b.textContent = new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' (' + P.games.filter(g => g.day === d && (g.tier === 'A' || g.tier === 'B')).length + ' bets)'; b.onclick = () => { DAY = d; draw(); }; b.dataset.d = d; dv.appendChild(b); });
+  document.getElementById('upd').textContent = 'Updated ' + new Date(P.updated).toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET · lines: ' + ([...new Set(P.games.map(g => g.book).filter(Boolean))].join(', ') || '–');
+  document.getElementById('all').onclick = () => { ALL = !ALL; document.getElementById('all').textContent = ALL ? 'Show bets only' : 'Show all games'; draw(); };
+  record(); draw(); logTable();
+}
+function record() {
+  const R = (LOG && LOG.record) || {}, c = document.getElementById('rec');
+  const card = (l, r) => { if (!r) return '<div class="card"><div class="l">' + l + '</div><div class="v">0–0</div><div class="s">no graded bets yet</div></div>';
+    const n = r.w + r.l, pct = n ? 100 * r.w / n : 0; return '<div class="card"><div class="l">' + l + '</div><div class="v">' + r.w + '–' + r.l + '</div><div class="s"><span class="' + (pct >= 52.4 ? 'good' : 'bad') + '">' + pct.toFixed(1) + '%</span> · ' + (r.units >= 0 ? '+' : '') + r.units.toFixed(2) + ' units · ' + n + ' bets</div></div>'; };
+  const ab = R.A || R.B ? { w: (R.A ? R.A.w : 0) + (R.B ? R.B.w : 0), l: (R.A ? R.A.l : 0) + (R.B ? R.B.l : 0), units: (R.A ? R.A.units : 0) + (R.B ? R.B.units : 0) } : null;
+  c.innerHTML = card('Rule bets (A + B)', ab) + card('Tier A · both 8+', R.A) + card('Tier B · both 5–8', R.B) + card('Tier C · tracked only', R.C);
+}
+function draw() {
+  document.querySelectorAll('#days button').forEach(b => b.classList.toggle('on', b.dataset.d === DAY));
+  const rows = P.games.filter(g => g.day === DAY && (ALL || g.tier)).sort((a, b) => (b.tier === 'A') - (a.tier === 'A') || (b.tier === 'B') - (a.tier === 'B') || (a.date < b.date ? -1 : 1));
+  document.querySelector('#tbl tbody').innerHTML = rows.length ? rows.map(g => '<tr class="' + (g.tier === 'A' || g.tier === 'B' ? g.tier : '') + '"><td>' + et(g.date) + '</td><td>' + g.away.abbr + ' @ ' + g.home.abbr + (g.neutral ? ' <span class="muted">(n)</span>' : '') + '</td><td>' + fmt(g.open) + '</td><td>' + fmt(g.current) + '</td><td>' + fmt(g.F) + '</td><td>' + fmt(g.C) + '</td><td>' + fmt(g.FC) + '</td><td>' + sg(g.gapF) + '</td><td>' + sg(g.gapC) + '</td><td>' + (g.side ? '<b>' + g.side + '</b> ' + tag(g.tier) : '<span class="muted">' + (g.F == null ? 'not enough games yet' : 'no bet') + '</span>') + '</td><td>' + (g.price != null ? (g.price > 0 ? '+' : '') + g.price : '–') + '</td></tr>').join('')
+    : '<tr><td colspan="11" class="muted">No rule bets for this day' + (ALL ? '' : ' — tap "Show all games"') + '.</td></tr>';
+}
+function logTable() {
+  if (!LOG) return; const L = Object.values(LOG.picks).filter(p => p.tier && p.result && p.result !== 'no bet').sort((a, b) => a.day < b.day ? 1 : -1).slice(0, 200);
+  document.querySelector('#logt tbody').innerHTML = L.length ? L.map(p => '<tr><td>' + p.day + '</td><td>' + p.away + ' @ ' + p.home + '</td><td>' + fmt(p.line) + '</td><td>' + fmt(p.F) + '</td><td>' + fmt(p.C) + '</td><td>' + p.side + ' ' + tag(p.tier) + '</td><td>' + (p.final ?? '–') + '</td><td class="' + (p.result === 'win' ? 'good' : p.result === 'loss' ? 'bad' : '') + '">' + p.result + '</td><td>' + (p.units != null ? (p.units > 0 ? '+' : '') + p.units.toFixed(2) : '–') + '</td></tr>').join('')
+    : '<tr><td colspan="9" class="muted">Nothing graded yet — results fill in the morning after each game day.</td></tr>';
+}
+load();
+</script>
+</body>
+</html>
