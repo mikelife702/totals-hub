@@ -84,7 +84,7 @@ h3{font-size:14px;margin:14px 0 4px}
 <body>
 <header>
 <h1>Live totals hub</h1>
-<div class="sub">Over/under model · v17 · data from ESPN · lines from DraftKings · <a href="backtest.html" style="color:#fff">Season replay →</a></div>
+<div class="sub">Over/under model · v18 · data from ESPN · lines from DraftKings · <a href="backtest.html" style="color:#fff">Season replay →</a></div>
 </header>
 <main>
 <div class="row">
@@ -822,6 +822,19 @@ function htModels(G,P,c){
   if(m.margin&&G.lg==='ncaa'&&P.el>=c.total/2-0.01)rem*=P.margin<=8?1.02:P.margin>=15?0.98:1;
   out.push({key,name:m.name,rem,final:P.pts+rem})}
  return out}
+// NBA halftime fluke check (Mike): in the NBA the 2nd half goes back to the pregame number; 1st-half three-point luck,
+// three-point volume and offensive rebounds barely carry (~5-7%). Split the 1st-half gap into those pieces and compare the
+// pregame 2nd-half number with the book's 2nd-half line.
+function nbaFlukes(G,P,c){
+ const live=G.live,[a,b]=live.order;
+ if(G.lg!=='nba'||live.state!=='in'||Math.abs(P.el-c.total/2)>2||!P.L||!P.NM||!P.NM[0]||!P.NM[1])return null;
+ const parts={three:0,vol:0,orb:0,two:0},per=[];
+ [[live.teams[a],P.NM[0],P.lA],[live.teams[b],P.NM[1],P.lB]].forEach(([t,n,l])=>{
+  const back=n.orbN*n.pppN,a2=t.fga-t.tpa,m2=t.fgm-t.tpm,miss=t.fga-t.fgm,poss=l&&l.pm||0;
+  const x={name:t.name,three:(t.tpm-t.tpa*n.p3n)*(3-back),vol:(t.tpa-n.r3n*poss)*(3*n.p3n-2*n.p2n),orb:(t.orb-n.orbN*miss)*n.pppN,two:(m2-a2*n.p2n)*(2-back)};
+  ['three','vol','orb','two'].forEach(k=>parts[k]+=x[k]);per.push(x)});
+ const total=parts.three+parts.vol+parts.orb+parts.two,pre2=P.L-P.L1,book=P.h2?P.h2:(P.line?P.line-P.pts:null);
+ return{parts,per,total,pre2,book,lean:book!=null?pre2-book:null,bookSrc:P.h2?'your 2nd-half line':'live total − score'}}
 function sidePanel(G,P,c){
  const live=G.live,[a,b]=live.order,nA=live.teams[a].name,nB=live.teams[b].name;
  let h='<div class="side"><h3>Why the model says '+(P.L&&live.state!=='pre'&&P.el>0?f1(P.proj):'–')+'</h3>';
@@ -867,6 +880,20 @@ function sidePanel(G,P,c){
   h+=plain((P.lineAuto?'DraftKings live':'Live line'),'price '+P.price+' · break-even '+(P.be*100).toFixed(1)+'%',f1(P.line),'');
   h+='<div class="verdict '+(pSide>P.be+0.03?side:'')+'" style="margin-top:8px">Edge <b>'+sgn(P.edge)+'</b> → '+side+' · chance '+Math.round(pSide*100)+'%</div>';
  }else h+='<p class="note">No live line yet.</p>';
+ const NF=nbaFlukes(G,P,c);
+ if(NF){
+  h+='<div class="sec">NBA halftime: fluke check</div>';
+  h+=row('Threes made vs normal',NF.per.map(x=>x.name+' '+sgn(x.three)).join(' · '),NF.parts.three);
+  h+=row('Three-point volume',NF.per.map(x=>x.name+' '+sgn(x.vol)).join(' · '),NF.parts.vol);
+  h+=row('Offensive rebounds',NF.per.map(x=>x.name+' '+sgn(x.orb)).join(' · '),NF.parts.orb);
+  h+=row('Twos made vs normal',NF.per.map(x=>x.name+' '+sgn(x.two)).join(' · '),NF.parts.two);
+  h+=plain('<b>1st-half points from flukes</b>','mostly gone in the 2nd half (~5-7% carries in the NBA)',sgn(NF.total),'tot');
+  h+=plain('Pregame 2nd-half number','full-game line − 1st-half line'+(G.L1?'':' (1st half estimated)'),f1(NF.pre2),'');
+  if(NF.book!=null){h+=plain('Book 2nd half',NF.bookSrc,f1(NF.book),'');
+   const side=NF.lean>0?'over':'under';
+   h+='<div class="verdict '+(Math.abs(NF.lean)>=2?side:'')+'">'+(Math.abs(NF.lean)>=2?'Lean '+side.toUpperCase()+': book is '+f1(Math.abs(NF.lean))+' '+(NF.lean>0?'below':'above')+' the pregame 2nd half':'Book ≈ pregame 2nd half (gap '+sgn(NF.lean)+'), no lean')+'</div>';
+  }else h+='<p class="note">Enter the 2nd-half line to compare.</p>';
+ }
  const HM=htModels(G,P,c);
  if(HM){
   const half=Math.abs(P.el-c.total/2)<0.6&&P.h2,ref=half?P.h2:P.line,refLab=half?'2nd-half line':'live line';
