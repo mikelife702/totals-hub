@@ -1,0 +1,38 @@
+name: Picks refresh (daytime)
+
+on:
+  schedule:
+    - cron: '23 15 * * *'   # ~10:20am New York: catch openers posted in the morning
+    - cron: '23 20 * * *'   # ~3:20pm New York: catch late openers before evening tip-offs
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ratings
+  cancel-in-progress: false
+
+jobs:
+  picks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build picks (college)
+        run: node scripts/build-picks.mjs
+      - name: Commit picks
+        run: |
+          git config user.name "ratings-bot"
+          git config user.email "ratings-bot@users.noreply.github.com"
+          git add data/ncaa-picks.json data/ncaa-picks-log.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Picks $(date -u +%Y-%m-%dT%H:%M)"
+            git pull --rebase
+            git push
+          fi
