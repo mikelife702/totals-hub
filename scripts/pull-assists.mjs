@@ -9,7 +9,7 @@ async function getJSON(url, tries = 4) { for (let i = 0; i < tries; i++) { try {
 async function pool(items, n, fn) { let i = 0; await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) { const k = i++; try { await fn(items[k]); } catch (e) { } } })); }
 const games = Object.values(JSON.parse(fs.readFileSync('data/' + season + '-games.json', 'utf8')).games);
 const outFile = 'data/' + season + '-assists.json';
-const out = fs.existsSync(outFile) ? JSON.parse(fs.readFileSync(outFile, 'utf8')) : { games: {} };
+const out = fs.existsSync(outFile) && !process.env.FORCE ? JSON.parse(fs.readFileSync(outFile, 'utf8')) : { games: {} };
 const todo = games.filter(g => !out.games[g.id]);
 console.log(season, 'games', games.length, 'to pull', todo.length);
 let done = 0;
@@ -26,7 +26,7 @@ await pool(todo, 6, async g => {
     if (!pl.scoringPlay || !pl.shootingPlay) continue; const txt = (pl.text || '').toLowerCase(); if (txt.includes('free throw')) continue;
     const tid = pl.team && pl.team.id; if (!tid || !rec[tid]) continue;
     rec[tid][2 + per]++; // fgm by half
-    if (txt.includes('assisted by')) rec[tid][per - 1]++;
+    if (txt.includes('assist')) rec[tid][per - 1]++; // 'Assisted by X.' (older) or '(X assists)' (from mid-Dec 2025)
   }
   out.games[g.id] = rec;
   if (++done % 500 === 0) { fs.writeFileSync(outFile, JSON.stringify(out)); console.log('pulled', done); }
