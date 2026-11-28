@@ -190,6 +190,14 @@ function grade(log, store) {
     for (const k of [p.pb2Skip ? 'Skipped' : p.pb2Tier, p.pb2Skip ? null : 'all'].filter(Boolean)) { const r = prec2[k] = prec2[k] || { w: 0, l: 0, units: 0 }; p.pb2Result === 'win' ? r.w++ : r.l++; r.units = +(r.units + (p.pb2U || 0)).toFixed(3); }
   }
   log.pb2Record = prec2;
+  const prech = {};
+  for (const p of Object.values(log.picks)) {
+    if (!p.h2Tier || p.final == null || p.line == null) continue;
+    if (p.h2Result == null) { if (p.final === p.line) p.h2Result = 'push'; else { const win = (p.final > p.line) === (p.h2Side === 'OVER'); p.h2Result = win ? 'win' : 'loss'; p.h2U = +((win ? pay(p.h2Side === 'OVER' ? p.po : p.pu) : -1) * (p.h2Units || 0)).toFixed(3); } }
+    if (!['win', 'loss'].includes(p.h2Result)) continue;
+    for (const k of [p.h2Skip ? 'Skipped' : p.h2Tier, p.h2Skip ? null : 'all'].filter(Boolean)) { const r = prech[k] = prech[k] || { w: 0, l: 0, units: 0 }; p.h2Result === 'win' ? r.w++ : r.l++; r.units = +(r.units + (p.h2U || 0)).toFixed(3); }
+  }
+  log.h2Record = prech;
 }
 
 // ---------- season bias (bias-corrected version) ----------
@@ -216,25 +224,31 @@ function seasonBias(done) {
 // Base: all four versions 5+ same side (1 unit) · Skip any of them when C core is under 3 off the opener on that side.
 function playbook(done, up, Cpred, FS = PF) {
   const raw = g => { const f = FS[g.id], c = PC[g.id], c1 = PC1[g.id], c3 = Cpred[g.id]; if (!f || !c || c1 == null || c3 == null) return null;
-    const v = { F: f.pace * f.ppp, C: c3, H: c.pace * f.ppp, C1: c1 }; return Object.values(v).every(isFinite) ? v : null; };
+    const v = { F: f.pace * f.ppp, C: c3, H: c.pace * f.ppp, H2: (0.7 * c.pace + 0.3 * f.pace) * f.ppp, C1: c1 }; return Object.values(v).every(isFinite) ? v : null; };
   const hist = done.filter(g => g.lines && (g.lines.close != null || g.lines.open != null)).sort((x, y) => x.date < y.date ? -1 : 1)
     .map(g => ({ v: raw(g), fin: g.teams[0].pts + g.teams[1].pts })).filter(x => x.v).slice(-800);
-  const lean = {}; for (const k of ['F', 'C', 'H', 'C1']) lean[k] = hist.length >= 60 ? hist.reduce((s, x) => s + x.v[k] - x.fin, 0) / hist.length : 0;
+  const lean = {}; for (const k of ['F', 'C', 'H', 'H2', 'C1']) lean[k] = hist.length >= 60 ? hist.reduce((s, x) => s + x.v[k] - x.fin, 0) / hist.length : 0;
   const out = {};
   for (const g of up) {
     const v = raw(g), open = g.lines && g.lines.open != null ? g.lines.open : null; if (!v || open == null) continue;
-    const F = v.F - lean.F, C = v.C - lean.C, H = v.H - lean.H, C1 = v.C1 - lean.C1, FC = (F + C) / 2;
-    const d = { F: F - open, C: C - open, FC: FC - open, H: H - open, C1: C1 - open };
+    const F = v.F - lean.F, C = v.C - lean.C, H = v.H - lean.H, H2 = v.H2 - lean.H2, C1 = v.C1 - lean.C1, FC = (F + C) / 2;
+    const d = { F: F - open, C: C - open, FC: FC - open, H: H - open, H2: H2 - open, C1: C1 - open };
     const sideOf = x => Math.sign(x), same = (x, s, t) => sideOf(x) === s && Math.abs(x) >= t;
     let tier = null, s = sideOf(d.H);
     if (same(d.H, s, 10) && same(d.FC, s, 5)) tier = 'Top';
     else if (same(d.H, s, 7) && same(d.FC, s, 5)) tier = 'Strong';
     else { s = sideOf(d.F); if (['F', 'C', 'FC', 'H'].every(k => same(d[k], s, 5))) tier = 'Base'; }
     const skip = !!tier && !same(d.C1, s, 3);
+    // H2 version (Nov 28, tracked): Strong tier uses (0.7 C pace + 0.3 F pace) × F scoring; Top and Base unchanged
+    let t2 = null, s2 = sideOf(d.H);
+    if (same(d.H, s2, 10) && same(d.FC, s2, 5)) t2 = 'Top';
+    else { s2 = sideOf(d.H2); if (same(d.H2, s2, 7) && same(d.FC, s2, 5)) t2 = 'Strong'; else { s2 = sideOf(d.F); if (['F', 'C', 'FC', 'H'].every(k => same(d[k], s2, 5))) t2 = 'Base'; } }
+    const skip2 = !!t2 && !same(d.C1, s2, 3);
     const cur = g.lines.close != null ? g.lines.close : null;
     out[g.id] = { F: +F.toFixed(1), C: +C.toFixed(1), FC: +FC.toFixed(1), H: +H.toFixed(1), C1: +C1.toFixed(1), gapH: +d.H.toFixed(1), gapFC: +d.FC.toFixed(1),
       tier, side: tier ? (s > 0 ? 'OVER' : 'UNDER') : null, skip, units: tier && !skip ? { Top: 2, Strong: 1.5, Base: 1 }[tier] : 0,
-      gapNow: tier && cur != null ? +((s > 0 ? 1 : -1) * ((tier === 'Base' ? FC : H) - cur)).toFixed(1) : null };
+      gapNow: tier && cur != null ? +((s > 0 ? 1 : -1) * ((tier === 'Base' ? FC : H) - cur)).toFixed(1) : null,
+      H2: +H2.toFixed(1), h2: t2 ? { tier: t2, side: s2 > 0 ? 'OVER' : 'UNDER', skip: skip2, units: skip2 ? 0 : { Top: 2, Strong: 1.5, Base: 1 }[t2] } : null };
   }
   return { out, lean: Object.fromEntries(Object.entries(lean).map(([k, x]) => [k, +x.toFixed(2)])), games: hist.length };
 }
@@ -265,7 +279,7 @@ async function main() {
   const logFile = 'data/ncaa-picks-log.json', log = fs.existsSync(logFile) ? JSON.parse(fs.readFileSync(logFile, 'utf8')) : { picks: {} };
   for (const g of games) { if (g.F == null) continue; const old = log.picks[g.id]; if (old && old.result) continue;
     // keep the first-seen opener and model numbers (the bet we would have made), refresh current line
-    const pbLog = { ...(g.pb ? { pbTier: g.pb.tier, pbSide: g.pb.side, pbSkip: g.pb.skip, pbUnits: g.pb.units, H: g.pb.H, C1: g.pb.C1, pbFC: g.pb.FC } : {}), ...(g.pb2 ? { pb2Tier: g.pb2.tier, pb2Side: g.pb2.side, pb2Skip: g.pb2.skip, pb2Units: g.pb2.units, F2: g.pb2.F, H2: g.pb2.H } : {}) };
+    const pbLog = { ...(g.pb ? { pbTier: g.pb.tier, pbSide: g.pb.side, pbSkip: g.pb.skip, pbUnits: g.pb.units, H: g.pb.H, C1: g.pb.C1, pbFC: g.pb.FC } : {}), ...(g.pb && g.pb.h2 ? { h2Tier: g.pb.h2.tier, h2Side: g.pb.h2.side, h2Skip: g.pb.h2.skip, h2Units: g.pb.h2.units } : {}), ...(g.pb2 ? { pb2Tier: g.pb2.tier, pb2Side: g.pb2.side, pb2Skip: g.pb2.skip, pb2Units: g.pb2.units, F2: g.pb2.F, H2: g.pb2.H } : {}) };
     log.picks[g.id] = old && old.line != null ? { ...pbLog, ...old, current: g.current } : { ...pbLog, id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, po: g.po, pu: g.pu, Fc: g.Fc, Cc: g.Cc, FCc: g.FCc, logged: new Date().toISOString() }; }
   grade(log, store); log.updated = new Date().toISOString();
   fs.writeFileSync(logFile, JSON.stringify(log));
