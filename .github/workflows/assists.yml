@@ -5,6 +5,9 @@ on:
       seasons:
         description: 'Seasons (space separated)'
         default: 'ncaa2025 ncaa2024 ncaa2023'
+      force:
+        description: 'Re-pull from scratch (1) or skip pulled games (blank)'
+        default: ''
 permissions:
   contents: write
 jobs:
@@ -17,6 +20,8 @@ jobs:
         with:
           node-version: 20
       - name: Pull
+        env:
+          FORCE: ${{ inputs.force }}
         run: for s in ${{ inputs.seasons }}; do node scripts/pull-assists.mjs $s; done
       - name: Commit
         if: always()
