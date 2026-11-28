@@ -693,6 +693,56 @@ function pickBadge(id){
  const col=p.tier==='A'||p.tier==='B'?'#067647':'#555';
  return '<div class="pk" style="font-size:11px;color:'+col+';margin-top:2px">F '+p.F.toFixed(1)+' · C '+p.C.toFixed(1)+' · F+C '+FC.toFixed(1)+' ('+(gp>0?'+':'')+gp.toFixed(1)+')'+(p.side?' · <b>'+p.side+' '+p.tier+'</b>':'')+'</div>';
 }
+// ---------- Halftime 2nd-half alert (tested on 2024-25 and 2025-26 vs DraftKings' real 2nd-half lines) ----------
+const HTW={b5050:[2.1653,0.0724,0.0638,0.2326,0.2571,0.1147,0.097],close:[2.104,0.0664,0.0609,0.2219,0.2418,0.1572,0.1397]};
+function htLog(){try{return JSON.parse(localStorage.getItem('htlog_v1')||'[]')}catch(e){return[]}}
+function htSave(L){try{localStorage.setItem('htlog_v1',JSON.stringify(L))}catch(e){}}
+function htLogBet(){const x=window._htLast;if(!x)return;const L=htLog().filter(r=>r.id!==x.id);L.push(x);htSave(L);render();}
+function halfCalc(G){
+ const live=G.live,[a,b]=live.order,RT=RAT.ncaa,per=live.periods;
+ if(G.lg!=='ncaa'||!per||!per[1]||!RT)return null;
+ const atHalf=!per[2]&&(/half/i.test(live.detail||'')||live.state==='in')&&live.elapsed>=19.9,after=!!per[2]||live.state==='post';
+ if(!atHalf&&!after)return null;
+ const rA=RT.ratings[a],rB=RT.ratings[b];if(!rA||!rB)return{err:'No ratings for one of the teams.'};
+ const lg=RT.lg,ftc=0.475;let s3=0,s2=0,wh=0,xFT=0,xTO=0;const hp=h=>h.fga+ftc*h.fta-h.orb+h.tov;
+ for(const [t,o] of [[a,b],[b,a]]){const O=RT.ratings[t].f,D=RT.ratings[o].f,h=per[1][t];if(!h)return null;
+  const p3=O.o_tp*D.d_tp/lg.tp,p2=O.o_p2*D.d_p2/lg.p2,ftr=O.o_ftr*D.d_ftr/lg.ftr,tov=O.o_tov*D.d_tov/lg.tov,ftp=RT.ratings[t].ftp||lg.ftp;
+  const a2=h.fga-h.tpa,m2=h.fgm-h.tpm;s3+=(h.tpm-h.tpa*p3)*2.7;s2+=(m2-a2*p2)*1.7;wh+=(h.fta-h.fga*ftr)*ftp;xFT+=ftc*(h.fta-h.fga*ftr);xTO+=h.tov-hp(h)*tov;}
+ const exp=rA.t*rB.t/lg.tempo/2,pace1=(hp(per[1][a])+hp(per[1][b]))/2,cp=(pace1-(xFT+xTO)/2)/exp-1,fp=(xFT+xTO)/2/exp;
+ const close=+G.L||(live.dk&&live.dk.close)||live.ou||0;if(!close)return{err:'Enter the pregame total (needed as the starting point).'};
+ const pk=PK&&PK[G.id],FC=pk&&pk.F!=null?(pk.F+pk.C)/2:null,base=FC!=null?(close+FC)/2:close,w=FC!=null?HTW.b5050:HTW.close;
+ const h1=per[1][a].pts+per[1][b].pts,half=base*0.476,paceP=cp*half,fakeP=fp*half,m1=h1-half,rest=m1-s3-s2-wh-paceP-fakeP;
+ const x=[s3,s2,wh,paceP,fakeP,rest],parts=x.map((v,i)=>v*w[i+1]);
+ const pred=0.524*base+w[0]+parts.reduce((s,v)=>s+v,0);
+ const score=live.order.reduce((s,t)=>s+(+live.teams[t].pts||0),0);
+ let line=+G.h2||null,src=line?'2nd-half line you entered':null;
+ if(!line&&atHalf&&live.dk&&live.dk.live){line=live.dk.live-score;src='implied from DK live total '+live.dk.live+' − score '+score;}
+ const price=G.price&&G.price!=='-110'?+G.price:null;
+ return{base,close,FC,h1,pred,x,parts,w,line,src,price,atHalf,after,cp,fp,score};
+}
+function halfCard(G){
+ if(G.lg!=='ncaa')return'';const H=halfCalc(G);if(!H)return'';
+ if(H.err)return '<div class="pre"><h3 style="margin:2px 0 4px">Halftime alert · 2nd half</h3><p class="note">'+H.err+'</p></div>';
+ const live=G.live,nm=['Threes made vs normal','Twos made vs normal','Whistle (FT pts vs normal)','Real pace','Fake pace (extra FT/TO trips)','Everything else'];
+ const gap=H.line!=null?H.pred-H.line:null,ag=gap==null?0:Math.abs(gap),side=gap==null?'':(gap>0?'OVER':'UNDER');
+ const units=ag>=4?2:ag>=3?1.5:ag>=2?1:0,badPrice=side==='OVER'&&H.price!=null&&H.price<=-120;
+ let h='<div class="pre" style="border:2px solid '+(units&&!badPrice?'#067647':'#ccc')+'"><h3 style="margin:2px 0 4px">Halftime alert · 2nd-half total</h3>';
+ if(gap==null)h+='<p class="note"><b>Enter DraftKings\' 2nd-half line</b> (box above, "2nd-half line") to get the call. Our 2nd half: <b>'+f1(H.pred)+'</b>.</p>';
+ else h+='<div style="font-size:17px;margin:4px 0"><b>Our 2nd half '+f1(H.pred)+'</b> vs line '+f1(H.line)+' → <b style="color:'+(units?(badPrice?'#b26a00':'#067647'):'#555')+'">'+(units?(badPrice?side+' '+(gap>0?'+':'')+gap.toFixed(1)+' · skip (price '+H.price+' worse than −120)':'BET '+side+' · '+units+' unit'+(units>1?'s':'')+' ('+(gap>0?'+':'')+gap.toFixed(1)+')'):'No bet (gap '+(gap>0?'+':'')+gap.toFixed(1)+', need 2+)')+'</b></div><p class="note">Line: '+H.src+(H.src&&/implied/.test(H.src)?'. Enter the real DK 2nd-half line for the tested call (the implied number usually differs a little).':'')+'</p>';
+ h+='<div class="tblwrap"><table><tr><th>1st half vs normal</th><th>Size</th><th>Carries</th><th>Adds to 2H</th></tr>';
+ H.x.forEach((v,i)=>{const sz=i===3?(H.cp*100).toFixed(1)+'% ('+(v>=0?'+':'')+v.toFixed(1)+')':i===4?(H.fp*100).toFixed(1)+'% ('+(v>=0?'+':'')+v.toFixed(1)+')':(v>=0?'+':'')+v.toFixed(1);h+='<tr><td>'+nm[i]+'</td><td>'+sz+'</td><td>'+Math.round(H.w[i+1]*100)+'%</td><td>'+(H.parts[i]>=0?'+':'')+H.parts[i].toFixed(1)+'</td></tr>'});
+ h+='<tr><td>Starting 2nd half: 52.4% of '+f1(H.base)+(H.FC!=null?' (50/50 Vegas '+f1(H.close)+' + F+C '+f1(H.FC)+')':' (Vegas)')+' + avg OT/late bump '+f1(H.w[0])+'</td><td></td><td></td><td>'+f1(0.524*H.base+H.w[0])+'</td></tr><tr><td><b>Our 2nd half</b></td><td></td><td></td><td><b>'+f1(H.pred)+'</b></td></tr></table></div>';
+ h+='<p class="note">Rule (tested out of sample, 2024-25 + 2025-26 vs DraftKings\' real 2nd-half lines): 2+ → 57% (1 unit), 3+ → 59% (1.5), 4+ → 63% (2). Mostly overs. Skip overs priced worse than −120. 2nd half includes OT. Normals use tonight\'s ratings (the test used season-to-date stats), so treat early numbers as tracking.</p>';
+ window._htLast=units?{id:G.id,day:new Date().toISOString().slice(0,10),game:live.teams[live.order[0]].name+' vs '+live.teams[live.order[1]].name,h1:H.h1,pred:+H.pred.toFixed(1),line:H.line,side,gap:+gap.toFixed(1),units,price:H.price}:null;
+ const L=htLog(),mine=L.find(r=>r.id===G.id);
+ if(units&&!mine)h+='<div class="row"><button onclick="htLogBet()">Log this bet</button></div>';
+ if(mine)h+='<p class="note">Logged: '+mine.side+' '+mine.line+' ('+(mine.units)+'u).</p>';
+ // grade + summary
+ let ch=false;for(const r of L){if(r.result)continue;if(r.id===G.id&&live.state==='post'){const fin=live.order.reduce((s,t)=>s+(+live.teams[t].pts||0),0),h2=fin-r.h1;r.result=h2===r.line?'push':((h2>r.line)===(r.side==='OVER')?'win':'loss');ch=true}}if(ch)htSave(L);
+ const g=L.filter(r=>r.result==='win'||r.result==='loss'),w=g.filter(r=>r.result==='win').length;
+ if(L.length)h+='<p class="note">Your halftime log (this device): '+L.length+' logged · graded '+w+'–'+(g.length-w)+(g.length?' ('+(100*w/g.length).toFixed(0)+'%)':'')+'. Results fill in when you open the game after it ends.</p>';
+ return h+'</div>';
+}
 function modelsCard(G){
  const p=PK&&PK[G.id];if(G.lg!=='ncaa')return'';
  if(!p||p.F==null)return '<div class="pre"><h3 style="margin:2px 0 4px">Models C · F · F+C</h3><p class="note">No model numbers for this game yet (needs both teams with enough games and an opening line; the picks job runs ~4am, 10am, 3pm ET).</p></div>';
@@ -960,7 +1010,7 @@ function render(){
   if(live.state==='in'&&G.dkStale&&!G.line)html+='<div class="warn">ESPN\'s DraftKings line hasn\'t moved while the score did. It looks stale, so it\'s not being used. Type the live line from the DraftKings app.</div>';
  }
  html+='<div class="row"><button onclick="refreshLive()">Refresh live</button><span class="note">Auto-refreshes every 45s while live.</span></div>';
- html+='<div class="wrap"><div>'+modelsCard(G)+preCard(G)+avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div></div>'+sidePanel(G,P,c)+'</div>';
+ html+='<div class="wrap"><div>'+halfCard(G)+modelsCard(G)+preCard(G)+avgTable(G,c)+boxTable(G,P,c)+paceBox(G,P)+periodTable(G,c)+charts(G,P,c)+'<div class="layer"><h3>5 · Model (draft, logic still being built)</h3>'+projBlock(G,P,c)+'</div></div>'+sidePanel(G,P,c)+'</div>';
  const active=document.activeElement&&document.activeElement.id;
  document.getElementById('game').innerHTML=html;
  if(active&&document.getElementById(active))document.getElementById(active).focus();
