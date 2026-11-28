@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import { computeRatings } from './build-ratings.mjs';
 
-const PF = {}, PC = {}, PC1 = {}; // model pieces for the playbook (hybrid = C pace × F points per trip; C core = Mike's original C)
+const PF = {}, PF2 = {}, PC = {}, PC1 = {}; // model pieces for the playbook (hybrid = C pace × F points per trip; C core = Mike's original C)
 const FTC = 0.475, HL = 75, CFG = { mins: 40, ftc: FTC, d1Only: true };
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/';
 const etDay = iso => new Date(Date.parse(iso) - 5 * 3600e3).toISOString().slice(0, 10);
@@ -35,27 +35,41 @@ const ST = {
 };
 const LG_SPLIT = { rs: 0.641, pR: 0.594, pJ: 0.385 }; // fallback rim/jumper split of twos when no half-by-half shot data yet
 
-function modelF(done, upcoming, minBias) {
+// opt (version F2, Nov 28): prior = [[games, age, weight per game], ...] keeps past seasons' games as history at a fixed weight;
+// era = 'auto' rescales prior-season stats to this season's league level in Nov–Dec; store = where pieces go (default PF).
+function modelF(done, upcoming, minBias, opt = {}) {
   const games = done.concat(upcoming.map(g => ({ ...g, _up: true }))).filter(g => g._up || g.mins === 40)
     .sort((a, b) => a.date < b.date ? -1 : 1);
-  const H = {}, pred = {}; let graded = [];
+  const H = {}, pred = {}, STORE = opt.store || PF, PW = {}; let graded = [];
+  for (const [pg, age, wt] of (opt.prior || [])) { PW[age] = wt;
+    for (const g of pg) { if (g.mins !== 40 || !g.teams || g.teams.length !== 2 || !g.teams.every(t => t.fga > 0)) continue;
+      const [a, b] = g.teams, sa = side(g, a, b), sb = side(g, b, a), gp = (sa.poss + sb.poss) / 2, d = dnum(etDay(g.date));
+      (H[a.id] = H[a.id] || []).push({ age, d, o: sa, y: sb, opp: b.id, gp }); (H[b.id] = H[b.id] || []).push({ age, d, o: sb, y: sa, opp: a.id, gp }); } }
   const days = [...new Set(games.map(g => etDay(g.date)))].sort();
   for (const day of days) {
     const today = games.filter(g => etDay(g.date) === day), now = dnum(day), teams = Object.keys(H), out = [];
     if (teams.length > 200) {
       const LG = {}; for (const s in ST) LG[s] = { n: 0, d: 0 }; let lgP = 0, lgN = 0;
-      for (const id of teams) for (const r of H[id]) { for (const s in ST) { LG[s].n += ST[s][0](r.o, r.y); LG[s].d += ST[s][1](r.o, r.y); } lgP += r.gp; lgN++; }
+      const ERA = opt.era === 'auto' && ['11', '12'].includes(day.slice(5, 7)), LGP = { 1: {}, 2: {} }, PP = { 1: [0, 0], 2: [0, 0] };
+      for (const a of [1, 2]) for (const s in ST) LGP[a][s] = { n: 0, d: 0 };
+      for (const id of teams) for (const r of H[id]) { if (r.age) { if (ERA) { for (const s in ST) { LGP[r.age][s].n += ST[s][0](r.o, r.y); LGP[r.age][s].d += ST[s][1](r.o, r.y); } PP[r.age][0] += r.gp; PP[r.age][1]++; } continue; }
+        for (const s in ST) { LG[s].n += ST[s][0](r.o, r.y); LG[s].d += ST[s][1](r.o, r.y); } lgP += r.gp; lgN++; }
+      if (opt.prior && lgN < 300) { // too few games this season: lean on last season's league rates
+        const L1 = { n: {}, d: {} }, P1 = [0, 0]; for (const id of teams) for (const r of H[id]) if (r.age === 1) { for (const s in ST) { L1.n[s] = (L1.n[s] || 0) + ST[s][0](r.o, r.y); L1.d[s] = (L1.d[s] || 0) + ST[s][1](r.o, r.y); } P1[0] += r.gp; P1[1]++; }
+        const wc = lgN / 300, sc = P1[1] ? (lgN || 1) / P1[1] : 0; if (P1[1]) { for (const s in ST) { LG[s].n = wc * LG[s].n + (1 - wc) * L1.n[s] * sc; LG[s].d = wc * LG[s].d + (1 - wc) * L1.d[s] * sc; } lgP = lgN ? wc * lgP + (1 - wc) * P1[0] / P1[1] * lgN : P1[0] / P1[1]; lgN = lgN || 1; } }
       const lg = {}; for (const s in ST) lg[s] = LG[s].d ? LG[s].n / LG[s].d : LG_SPLIT[s]; const lgPace = lgP / lgN;
-      const w = r => Math.pow(.5, (now - r.d) / HL);
+      const SC = { 1: {}, 2: {} }, PSC = { 1: 1, 2: 1 }; if (ERA) for (const a of [1, 2]) { for (const s in ST) { const q = LGP[a][s]; SC[a][s] = q.d && q.n ? lg[s] / (q.n / q.d) : 1; } PSC[a] = PP[a][1] ? lgPace / (PP[a][0] / PP[a][1]) : 1; }
+      const fac = (r, s) => r.age && ERA ? SC[r.age][s] : 1, gpx = r => r.age && ERA ? r.gp * PSC[r.age] : r.gp;
+      const w = r => r.age ? (PW[r.age] || 0) : Math.pow(.5, (now - r.d) / HL);
       const raw1 = {};
-      for (const id of teams) { raw1[id] = { o: {}, d: {} }; for (const s in ST) { let on = 0, od = 0, dn = 0, dd = 0; for (const r of H[id]) { const k = w(r); on += k * ST[s][0](r.o, r.y); od += k * ST[s][1](r.o, r.y); dn += k * ST[s][0](r.y, r.o); dd += k * ST[s][1](r.y, r.o); }
+      for (const id of teams) { raw1[id] = { o: {}, d: {} }; for (const s in ST) { let on = 0, od = 0, dn = 0, dd = 0; for (const r of H[id]) { const k = w(r), fx = fac(r, s); on += k * ST[s][0](r.o, r.y) * fx; od += k * ST[s][1](r.o, r.y); dn += k * ST[s][0](r.y, r.o) * fx; dd += k * ST[s][1](r.y, r.o); }
         raw1[id].o[s] = (on + ST[s][2] * lg[s]) / (od + ST[s][2]); raw1[id].d[s] = ST[s][4] ? (dn + ST[s][3] * lg[s]) / (dd + ST[s][3]) : lg[s]; } }
       const adj = {};
       for (const id of teams) { adj[id] = { o: {}, d: {} }; for (const s in ST) { let on = 0, od = 0, dn = 0, dd = 0; for (const r of H[id]) { const k = w(r), op = raw1[r.opp];
-          const fo = op ? op.d[s] / lg[s] : 1, fd = op ? op.o[s] / lg[s] : 1; on += k * ST[s][0](r.o, r.y); od += k * ST[s][1](r.o, r.y) * fo; dn += k * ST[s][0](r.y, r.o); dd += k * ST[s][1](r.y, r.o) * fd; }
+          const fx = fac(r, s), fo = op ? op.d[s] / lg[s] : 1, fd = op ? op.o[s] / lg[s] : 1; on += k * ST[s][0](r.o, r.y) * fx; od += k * ST[s][1](r.o, r.y) * fo; dn += k * ST[s][0](r.y, r.o) * fx; dd += k * ST[s][1](r.y, r.o) * fd; }
         adj[id].o[s] = (on + ST[s][2] * lg[s]) / (od + ST[s][2]); adj[id].d[s] = ST[s][4] ? (dn + ST[s][3] * lg[s]) / (dd + ST[s][3]) : lg[s]; } }
-      const paceCC = id => { const A = H[id], gps = A.map(r => r.gp); const z = [...gps].sort((x, y) => x - y), lo = z[Math.floor(z.length * .1)], hi = z[Math.max(0, Math.ceil(z.length * .9) - 1)];
-        let n = 0, s = 0; A.forEach(r => { const k = w(r); n += k; s += k * Math.min(hi, Math.max(lo, r.gp)); }); const cap = (s + 6 * lgPace) / (n + 6);
+      const paceCC = id => { const A = H[id], gps = A.filter(r => !r.age).map(r => r.gp); const z = [...(gps.length >= 3 ? gps : A.map(gpx))].sort((x, y) => x - y), lo = z[Math.floor(z.length * .1)], hi = z[Math.max(0, Math.ceil(z.length * .9) - 1)];
+        let n = 0, s = 0; A.forEach(r => { const k = w(r); n += k; s += k * Math.min(hi, Math.max(lo, gpx(r))); }); const cap = (s + 6 * lgPace) / (n + 6);
         const ch = []; let end = gps.length; for (let i = 0; i < 3 && end - 5 >= 0; i++) { const q = gps.slice(end - 5, end).sort((x, y) => x - y); ch.push(mean(q.slice(1, 4))); end -= 4; }
         return .7 * cap + .3 * (ch.length ? mean(ch) : cap); };
       const ppp = (O, D, home) => { const m = s => s === 'ftp' ? O.o.ftp : O.o[s] * D.d[s] / lg[s];
@@ -71,7 +85,7 @@ function modelF(done, upcoming, minBias) {
         const _pa = ppp(adj[a.id], adj[b.id], hf(a)), _pb = ppp(adj[b.id], adj[a.id], hf(b)); const v = pc * (_pa + _pb);
         if (!isFinite(v)) continue;
         const G = graded.slice(-800), bias = G.length >= minBias ? mean(G.map(x => x.p - x.final)) : 0;
-        PF[g.id] = { pace: pc, ppp: _pa + _pb };
+        STORE[g.id] = { pace: pc, ppp: _pa + _pb };
         if (g._up) pred[g.id] = v - bias; else { out.push({ p: v, final: a.pts + b.pts }); pred[g.id] = v - bias; }
       }
     }
@@ -168,6 +182,14 @@ function grade(log, store) {
     for (const k of [p.pbSkip ? 'Skipped' : p.pbTier, p.pbSkip ? null : 'all'].filter(Boolean)) { const r = prec[k] = prec[k] || { w: 0, l: 0, units: 0 }; p.pbResult === 'win' ? r.w++ : r.l++; r.units = +(r.units + (p.pbU || 0)).toFixed(3); }
   }
   log.pbRecord = prec;
+  const prec2 = {};
+  for (const p of Object.values(log.picks)) {
+    if (!p.pb2Tier || p.final == null || p.line == null) continue;
+    if (p.pb2Result == null) { if (p.final === p.line) p.pb2Result = 'push'; else { const win = (p.final > p.line) === (p.pb2Side === 'OVER'); p.pb2Result = win ? 'win' : 'loss'; p.pb2U = +((win ? pay(p.pb2Side === 'OVER' ? p.po : p.pu) : -1) * (p.pb2Units || 0)).toFixed(3); } }
+    if (!['win', 'loss'].includes(p.pb2Result)) continue;
+    for (const k of [p.pb2Skip ? 'Skipped' : p.pb2Tier, p.pb2Skip ? null : 'all'].filter(Boolean)) { const r = prec2[k] = prec2[k] || { w: 0, l: 0, units: 0 }; p.pb2Result === 'win' ? r.w++ : r.l++; r.units = +(r.units + (p.pb2U || 0)).toFixed(3); }
+  }
+  log.pb2Record = prec2;
 }
 
 // ---------- season bias (bias-corrected version) ----------
@@ -192,8 +214,8 @@ function seasonBias(done) {
 // F, C (C3-trimmed), F + C average, hybrid (C's pace × F's points per trip), and Mike's original C core (filter only).
 // Top: hybrid 10+ off the opener and F + C 5+ same side (2 units) · Strong: hybrid 7+ and F + C 5+ (1.5 units) ·
 // Base: all four versions 5+ same side (1 unit) · Skip any of them when C core is under 3 off the opener on that side.
-function playbook(done, up, Cpred) {
-  const raw = g => { const f = PF[g.id], c = PC[g.id], c1 = PC1[g.id], c3 = Cpred[g.id]; if (!f || !c || c1 == null || c3 == null) return null;
+function playbook(done, up, Cpred, FS = PF) {
+  const raw = g => { const f = FS[g.id], c = PC[g.id], c1 = PC1[g.id], c3 = Cpred[g.id]; if (!f || !c || c1 == null || c3 == null) return null;
     const v = { F: f.pace * f.ppp, C: c3, H: c.pace * f.ppp, C1: c1 }; return Object.values(v).every(isFinite) ? v : null; };
   const hist = done.filter(g => g.lines && (g.lines.close != null || g.lines.open != null)).sort((x, y) => x.date < y.date ? -1 : 1)
     .map(g => ({ v: raw(g), fin: g.teams[0].pts + g.teams[1].pts })).filter(x => x.v).slice(-800);
@@ -231,14 +253,20 @@ async function main() {
   const today = etDay(new Date().toISOString()), tomorrow = etDay(new Date(Date.now() + 864e5).toISOString());
   const up = await upcomingGames([today, tomorrow]);
   const F = modelF(done, up, 60), C = modelC(done, done.concat(up)), PB = playbook(done, up, C), B = seasonBias(done);
-  const games = up.map(g => { const p = pick(g, F[g.id], C[g.id]), corr = p ? { Fc: +(p.F - B.F).toFixed(1), Cc: +(p.C - B.C).toFixed(1), FCc: +(p.FC - (B.F + B.C) / 2).toFixed(1) } : {}; return { id: g.id, pb: PB.out[g.id] || null, date: g.date, day: etDay(g.date), away: g.teams.find(t => !t.home) || g.teams[0], home: g.teams.find(t => t.home) || g.teams[1], neutral: g.neutral, conf: g.confGame, book: g.lines && g.lines.book, ...(p || {}), ...corr }; })
+  // F2 (tracked side by side): last two seasons as light history (0.08 / 0.02 per game) + this year's style rescale in Nov–Dec
+  const sy = (() => { const d = new Date(); return d.getUTCMonth() >= 6 ? d.getUTCFullYear() : d.getUTCFullYear() - 1; })();
+  const loadS = y => { const f = 'data/ncaa' + y + '-games.json'; return fs.existsSync(f) ? Object.values(JSON.parse(fs.readFileSync(f, 'utf8')).games) : []; };
+  const P1g = loadS(sy - 1), P2g = loadS(sy - 2);
+  let PB2 = { out: {}, lean: {}, games: 0 };
+  if (P1g.length) { modelF(done, up, 60, { prior: [[P1g, 1, 0.08], [P2g, 2, 0.02]], era: 'auto', store: PF2 }); PB2 = playbook(done, up, C, PF2); }
+  const games = up.map(g => { const p = pick(g, F[g.id], C[g.id]), corr = p ? { Fc: +(p.F - B.F).toFixed(1), Cc: +(p.C - B.C).toFixed(1), FCc: +(p.FC - (B.F + B.C) / 2).toFixed(1) } : {}; return { id: g.id, pb: PB.out[g.id] || null, pb2: PB2.out[g.id] || null, date: g.date, day: etDay(g.date), away: g.teams.find(t => !t.home) || g.teams[0], home: g.teams.find(t => t.home) || g.teams[1], neutral: g.neutral, conf: g.confGame, book: g.lines && g.lines.book, ...(p || {}), ...corr }; })
     .sort((x, y) => (x.date < y.date ? -1 : 1));
-  fs.writeFileSync('data/ncaa-picks.json', JSON.stringify({ updated: new Date().toISOString(), bias: { F: +B.F.toFixed(2), C: +B.C.toFixed(2), games: B.games, days: B.days }, playbookLean: PB.lean, playbookGames: PB.games, rule: 'F and C each 5+ off the opening total, same side (A = both 8+, B = both 5+, C = average 5+ only, track-only)', games }));
+  fs.writeFileSync('data/ncaa-picks.json', JSON.stringify({ updated: new Date().toISOString(), bias: { F: +B.F.toFixed(2), C: +B.C.toFixed(2), games: B.games, days: B.days }, playbookLean: PB.lean, playbookGames: PB.games, playbook2Lean: PB2.lean, playbook2Games: PB2.games, rule: 'F and C each 5+ off the opening total, same side (A = both 8+, B = both 5+, C = average 5+ only, track-only)', games }));
   const logFile = 'data/ncaa-picks-log.json', log = fs.existsSync(logFile) ? JSON.parse(fs.readFileSync(logFile, 'utf8')) : { picks: {} };
   for (const g of games) { if (g.F == null) continue; const old = log.picks[g.id]; if (old && old.result) continue;
     // keep the first-seen opener and model numbers (the bet we would have made), refresh current line
-    const pbLog = g.pb ? { pbTier: g.pb.tier, pbSide: g.pb.side, pbSkip: g.pb.skip, pbUnits: g.pb.units, H: g.pb.H, C1: g.pb.C1, pbFC: g.pb.FC } : {};
-    log.picks[g.id] = old && old.line != null ? { ...(old.pbTier === undefined ? pbLog : {}), ...old, current: g.current } : { ...pbLog, id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, po: g.po, pu: g.pu, Fc: g.Fc, Cc: g.Cc, FCc: g.FCc, logged: new Date().toISOString() }; }
+    const pbLog = { ...(g.pb ? { pbTier: g.pb.tier, pbSide: g.pb.side, pbSkip: g.pb.skip, pbUnits: g.pb.units, H: g.pb.H, C1: g.pb.C1, pbFC: g.pb.FC } : {}), ...(g.pb2 ? { pb2Tier: g.pb2.tier, pb2Side: g.pb2.side, pb2Skip: g.pb2.skip, pb2Units: g.pb2.units, F2: g.pb2.F, H2: g.pb2.H } : {}) };
+    log.picks[g.id] = old && old.line != null ? { ...pbLog, ...old, current: g.current } : { ...pbLog, id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, po: g.po, pu: g.pu, Fc: g.Fc, Cc: g.Cc, FCc: g.FCc, logged: new Date().toISOString() }; }
   grade(log, store); log.updated = new Date().toISOString();
   fs.writeFileSync(logFile, JSON.stringify(log));
   console.log('picks: ' + games.length + ' upcoming, ' + games.filter(g => g.tier === 'A' || g.tier === 'B').length + ' rule bets | bias F ' + B.F.toFixed(2) + ' C ' + B.C.toFixed(2) + ' (' + B.games + ' games) | record ' + JSON.stringify(log.record || {}));
