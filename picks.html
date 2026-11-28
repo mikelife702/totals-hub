@@ -52,6 +52,8 @@ Past three seasons (opener, real prices): rule 57.6% (761 bets, +9% return). <b>
 <h2>Forward record (logged before tip-off)</h2>
 <p class="note"><b>Playbook</b> (units = tier size; starts Nov 28)</p>
 <div class="cards" id="prec"></div>
+<p class="note"><b>Playbook with F2</b> (tracked side by side, not bet: F2 = F + last two seasons as light history + this year's style)</p>
+<div class="cards" id="prec2"></div>
 <p class="note"><b>Original rule</b> (F and C each 5+ off the opener)</p>
 <div class="cards" id="rec"></div>
 
@@ -61,13 +63,13 @@ Past three seasons (opener, real prices): rule 57.6% (761 bets, +9% return). <b>
 <div class="tw"><table id="mods"><thead><tr><th>Model</th><th>Gap</th><th>Over · forward</th><th>Under · forward</th><th>All · forward</th><th>Over · past</th><th>Under · past</th></tr></thead><tbody></tbody></table></div>
 
 <div class="row" id="days"></div>
-<div class="tw"><table id="tbl"><thead><tr><th>Time (ET)</th><th>Game</th><th>Open</th><th>Now</th><th>F</th><th>C</th><th>Avg</th><th>F gap</th><th>C gap</th><th>Pick</th><th>Price</th><th class="pb">Hybrid</th><th>C core</th><th>Playbook</th><th>Size</th><th>Edge vs now</th></tr></thead><tbody></tbody></table></div>
+<div class="tw"><table id="tbl"><thead><tr><th>Time (ET)</th><th>Game</th><th>Open</th><th>Now</th><th>F</th><th>C</th><th>Avg</th><th>F gap</th><th>C gap</th><th>Pick</th><th>Price</th><th class="pb">Hybrid</th><th>C core</th><th>Playbook</th><th>Size</th><th>Edge vs now</th><th class="pb">F2</th><th>Playbook F2</th></tr></thead><tbody></tbody></table></div>
 <p class="note" id="upd"></p>
 <div class="row"><button id="all">Show all games</button></div>
 
 <h2>Graded picks</h2>
 <p class="note">Every rule bet and tracked game, with the opener and model numbers as they were before tip-off.</p>
-<div class="tw"><table id="logt"><thead><tr><th>Day</th><th>Game</th><th>Line</th><th>F</th><th>C</th><th>Pick</th><th>Final</th><th>Result</th><th>Units</th><th class="pb">Playbook</th><th>Result</th><th>Units</th></tr></thead><tbody></tbody></table></div>
+<div class="tw"><table id="logt"><thead><tr><th>Day</th><th>Game</th><th>Line</th><th>F</th><th>C</th><th>Pick</th><th>Final</th><th>Result</th><th>Units</th><th class="pb">Playbook</th><th>Result</th><th>Units</th><th class="pb">Playbook F2</th><th>Result</th></tr></thead><tbody></tbody></table></div>
 </main>
 <script>
 let P = null, LOG = null, DAY = null, ALL = false;
@@ -96,6 +98,8 @@ function record() {
   const ab = R.A || R.B ? { w: (R.A ? R.A.w : 0) + (R.B ? R.B.w : 0), l: (R.A ? R.A.l : 0) + (R.B ? R.B.l : 0), units: (R.A ? R.A.units : 0) + (R.B ? R.B.units : 0) } : null;
   const PR = (LOG && LOG.pbRecord) || {};
   document.getElementById('prec').innerHTML = card('Playbook bets', PR.all) + card('Top · 2 units', PR.Top) + card('Strong · 1.5 units', PR.Strong) + card('Base · 1 unit', PR.Base) + card('Skipped by C core (tracked)', PR.Skipped);
+  const PR2 = (LOG && LOG.pb2Record) || {};
+  document.getElementById('prec2').innerHTML = card('Playbook F2 bets', PR2.all) + card('Top', PR2.Top) + card('Strong', PR2.Strong) + card('Base', PR2.Base) + card('Skipped by C core', PR2.Skipped);
   c.innerHTML = card('Rule bets (A + B)', ab) + card('Tier A · both 8+', R.A) + card('Tier B · both 5–8', R.B) + card('Tier C · tracked only', R.C);
 }
 const PAST = { 'C3-trimmed (Mike)|5': ['601–507 · 54.2%', '105–83 · 55.9%'], 'C3-trimmed (Mike)|8': ['150–115 · 56.6%', '15–7 · 68.2%'],
@@ -120,14 +124,14 @@ function models() {
 function draw() {
   document.querySelectorAll('#days button').forEach(b => b.classList.toggle('on', b.dataset.d === DAY));
   const pr = g => g.pb && g.pb.tier ? ({ Top: 4, Strong: 3, Base: 2 }[g.pb.tier] - (g.pb.skip ? 2.5 : 0)) : 0;
-  const rows = P.games.filter(g => g.day === DAY && (ALL || g.tier || (g.pb && g.pb.tier))).sort((a, b) => pr(b) - pr(a) || (b.tier === 'A') - (a.tier === 'A') || (b.tier === 'B') - (a.tier === 'B') || (a.date < b.date ? -1 : 1));
-  document.querySelector('#tbl tbody').innerHTML = rows.length ? rows.map(g => '<tr class="' + (g.tier === 'A' || g.tier === 'B' ? g.tier : (g.pb && g.pb.tier && !g.pb.skip ? 'P' : '')) + '"><td>' + et(g.date) + '</td><td>' + g.away.abbr + ' @ ' + g.home.abbr + (g.neutral ? ' <span class="muted">(n)</span>' : '') + '</td><td>' + fmt(g.open) + '</td><td>' + fmt(g.current) + '</td><td>' + fmt(g.F) + '</td><td>' + fmt(g.C) + '</td><td>' + fmt(g.FC) + '</td><td>' + sg(g.gapF) + '</td><td>' + sg(g.gapC) + '</td><td>' + (g.side ? '<b>' + g.side + '</b> ' + tag(g.tier) : '<span class="muted">' + (g.F == null ? 'not enough games yet' : 'no bet') + '</span>') + '</td><td>' + (g.price != null ? (g.price > 0 ? '+' : '') + g.price : '–') + '</td><td class="pb">' + fmt(g.pb && g.pb.H) + '</td><td>' + fmt(g.pb && g.pb.C1) + '</td><td>' + pbTag(g.pb) + '</td><td>' + (g.pb && g.pb.units ? '$' + Math.round(g.pb.units * UNIT) : '–') + '</td><td>' + (g.pb && g.pb.gapNow != null ? '<span class="' + (g.pb.gapNow >= 7 ? 'good' : g.pb.gapNow < 5 ? 'bad' : '') + '">' + sg(g.pb.gapNow) + '</span>' : '–') + '</td></tr>').join('')
-    : '<tr><td colspan="16" class="muted">No bets (either rule) for this day' + (ALL ? '' : ' — tap "Show all games"') + '.</td></tr>';
+  const rows = P.games.filter(g => g.day === DAY && (ALL || g.tier || (g.pb && g.pb.tier) || (g.pb2 && g.pb2.tier))).sort((a, b) => pr(b) - pr(a) || (b.tier === 'A') - (a.tier === 'A') || (b.tier === 'B') - (a.tier === 'B') || (a.date < b.date ? -1 : 1));
+  document.querySelector('#tbl tbody').innerHTML = rows.length ? rows.map(g => '<tr class="' + (g.tier === 'A' || g.tier === 'B' ? g.tier : (g.pb && g.pb.tier && !g.pb.skip ? 'P' : '')) + '"><td>' + et(g.date) + '</td><td>' + g.away.abbr + ' @ ' + g.home.abbr + (g.neutral ? ' <span class="muted">(n)</span>' : '') + '</td><td>' + fmt(g.open) + '</td><td>' + fmt(g.current) + '</td><td>' + fmt(g.F) + '</td><td>' + fmt(g.C) + '</td><td>' + fmt(g.FC) + '</td><td>' + sg(g.gapF) + '</td><td>' + sg(g.gapC) + '</td><td>' + (g.side ? '<b>' + g.side + '</b> ' + tag(g.tier) : '<span class="muted">' + (g.F == null ? 'not enough games yet' : 'no bet') + '</span>') + '</td><td>' + (g.price != null ? (g.price > 0 ? '+' : '') + g.price : '–') + '</td><td class="pb">' + fmt(g.pb && g.pb.H) + '</td><td>' + fmt(g.pb && g.pb.C1) + '</td><td>' + pbTag(g.pb) + '</td><td>' + (g.pb && g.pb.units ? '$' + Math.round(g.pb.units * UNIT) : '–') + '</td><td>' + (g.pb && g.pb.gapNow != null ? '<span class="' + (g.pb.gapNow >= 7 ? 'good' : g.pb.gapNow < 5 ? 'bad' : '') + '">' + sg(g.pb.gapNow) + '</span>' : '–') + '</td><td class="pb">' + fmt(g.pb2 && g.pb2.F) + '</td><td>' + pbTag(g.pb2) + '</td></tr>').join('')
+    : '<tr><td colspan="18" class="muted">No bets (either rule) for this day' + (ALL ? '' : ' — tap "Show all games"') + '.</td></tr>';
 }
 function logTable() {
-  if (!LOG) return; const L = Object.values(LOG.picks).filter(p => (p.tier && p.result && p.result !== 'no bet') || (p.pbTier && p.pbResult)).sort((a, b) => a.day < b.day ? 1 : -1).slice(0, 200);
-  document.querySelector('#logt tbody').innerHTML = L.length ? L.map(p => '<tr><td>' + p.day + '</td><td>' + p.away + ' @ ' + p.home + '</td><td>' + fmt(p.line) + '</td><td>' + fmt(p.F) + '</td><td>' + fmt(p.C) + '</td><td>' + (p.side ? p.side + ' ' + tag(p.tier) : '<span class="muted">–</span>') + '</td><td>' + (p.final ?? '–') + '</td><td class="' + (p.result === 'win' ? 'good' : p.result === 'loss' ? 'bad' : '') + '">' + p.result + '</td><td>' + (p.units != null ? (p.units > 0 ? '+' : '') + p.units.toFixed(2) : '–') + '</td><td class="pb">' + (p.pbTier ? (p.pbSkip ? '<span class="tag tSkip">' + p.pbTier + '</span>' : p.pbSide + ' <span class="tag t' + p.pbTier + '">' + p.pbTier + '</span>') : '<span class="muted">–</span>') + '</td><td class="' + (p.pbResult === 'win' ? 'good' : p.pbResult === 'loss' ? 'bad' : '') + '">' + (p.pbResult || '–') + '</td><td>' + (p.pbU != null && !p.pbSkip ? (p.pbU > 0 ? '+' : '') + p.pbU.toFixed(2) : '–') + '</td></tr>').join('')
-    : '<tr><td colspan="12" class="muted">Nothing graded yet — results fill in the morning after each game day.</td></tr>';
+  if (!LOG) return; const L = Object.values(LOG.picks).filter(p => (p.tier && p.result && p.result !== 'no bet') || (p.pbTier && p.pbResult) || (p.pb2Tier && p.pb2Result)).sort((a, b) => a.day < b.day ? 1 : -1).slice(0, 200);
+  document.querySelector('#logt tbody').innerHTML = L.length ? L.map(p => '<tr><td>' + p.day + '</td><td>' + p.away + ' @ ' + p.home + '</td><td>' + fmt(p.line) + '</td><td>' + fmt(p.F) + '</td><td>' + fmt(p.C) + '</td><td>' + (p.side ? p.side + ' ' + tag(p.tier) : '<span class="muted">–</span>') + '</td><td>' + (p.final ?? '–') + '</td><td class="' + (p.result === 'win' ? 'good' : p.result === 'loss' ? 'bad' : '') + '">' + p.result + '</td><td>' + (p.units != null ? (p.units > 0 ? '+' : '') + p.units.toFixed(2) : '–') + '</td><td class="pb">' + (p.pbTier ? (p.pbSkip ? '<span class="tag tSkip">' + p.pbTier + '</span>' : p.pbSide + ' <span class="tag t' + p.pbTier + '">' + p.pbTier + '</span>') : '<span class="muted">–</span>') + '</td><td class="' + (p.pbResult === 'win' ? 'good' : p.pbResult === 'loss' ? 'bad' : '') + '">' + (p.pbResult || '–') + '</td><td>' + (p.pbU != null && !p.pbSkip ? (p.pbU > 0 ? '+' : '') + p.pbU.toFixed(2) : '–') + '</td><td class="pb">' + (p.pb2Tier ? (p.pb2Skip ? '<span class="tag tSkip">' + p.pb2Tier + '</span>' : p.pb2Side + ' <span class="tag t' + p.pb2Tier + '">' + p.pb2Tier + '</span>') : '<span class="muted">–</span>') + '</td><td class="' + (p.pb2Result === 'win' ? 'good' : p.pb2Result === 'loss' ? 'bad' : '') + '">' + (p.pb2Result || '–') + '</td></tr>').join('')
+    : '<tr><td colspan="14" class="muted">Nothing graded yet — results fill in the morning after each game day.</td></tr>';
 }
 load();
 </script>
