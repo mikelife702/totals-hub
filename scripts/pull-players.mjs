@@ -15,7 +15,7 @@ async function getJSON(url, tries = 4) {
 }
 async function pool(items, n, fn) { let i = 0; await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) { const k = i++; try { await fn(items[k]); } catch (e) { } } })); }
 
-const games = Object.values(JSON.parse(fs.readFileSync('data/ncaa2025-games.json', 'utf8')).games).filter(g => g.teams.some(t => TEAMS.includes(t.id)));
+const games = Object.values(JSON.parse(fs.readFileSync('data/ncaa2025-games.json', 'utf8')).games).filter(g => process.env.ALL || g.teams.some(t => TEAMS.includes(t.id)));
 const outFile = 'data/ncaa2025-players.json';
 const out = fs.existsSync(outFile) ? JSON.parse(fs.readFileSync(outFile, 'utf8')) : { games: {} };
 const todo = games.filter(g => !out.games[g.id]);
@@ -43,6 +43,7 @@ await pool(todo, 6, async g => {
     if (pl.shootingPlay) { const txt = (pl.text || '').toLowerCase(); if (!txt.includes('free throw')) p.h[per - 1][1]++; if (pl.scoringPlay) p.h[per - 1][0] += pl.scoreValue || 0; }
   }
   out.games[g.id] = rec;
+  if (Object.keys(out.games).length % 500 === 0) fs.writeFileSync(outFile, JSON.stringify(out));
 });
 fs.writeFileSync(outFile, JSON.stringify(out));
 console.log('saved', Object.keys(out.games).length, 'games');
