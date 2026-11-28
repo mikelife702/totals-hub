@@ -1,0 +1,29 @@
+name: Assists pull (past seasons)
+on:
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: 'Seasons (space separated)'
+        default: 'ncaa2025 ncaa2024 ncaa2023'
+permissions:
+  contents: write
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Pull
+        run: for s in ${{ inputs.seasons }}; do node scripts/pull-assists.mjs $s; done
+      - name: Commit
+        if: always()
+        run: |
+          git config user.name "totals-hub-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/*-assists.json
+          git commit -m "Team assists by half" || echo "nothing to commit"
+          git pull --rebase
+          git push
