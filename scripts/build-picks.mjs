@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import { computeRatings } from './build-ratings.mjs';
 
+const PF = {}, PC = {}, PC1 = {}; // model pieces for the playbook (hybrid = C pace × F points per trip; C core = Mike's original C)
 const FTC = 0.475, HL = 75, CFG = { mins: 40, ftc: FTC, d1Only: true };
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/';
 const etDay = iso => new Date(Date.parse(iso) - 5 * 3600e3).toISOString().slice(0, 10);
@@ -67,9 +68,10 @@ function modelF(done, upcoming, minBias) {
         if (!g._up && !(g.lines && g.lines.close)) continue;
         const hf = t => g.neutral ? 1 : (t.home ? 1.014 : 0.986);
         const pc = paceCC(a.id) * paceCC(b.id) / lgPace;
-        const v = pc * (ppp(adj[a.id], adj[b.id], hf(a)) + ppp(adj[b.id], adj[a.id], hf(b)));
+        const _pa = ppp(adj[a.id], adj[b.id], hf(a)), _pb = ppp(adj[b.id], adj[a.id], hf(b)); const v = pc * (_pa + _pb);
         if (!isFinite(v)) continue;
         const G = graded.slice(-800), bias = G.length >= minBias ? mean(G.map(x => x.p - x.final)) : 0;
+        PF[g.id] = { pace: pc, ppp: _pa + _pb };
         if (g._up) pred[g.id] = v - bias; else { out.push({ p: v, final: a.pts + b.pts }); pred[g.id] = v - bias; }
       }
     }
@@ -88,6 +90,7 @@ function modelC(done, upcoming) {
     const train = done.filter(g => g.mins >= 40 && etDay(g.date) < day);
     if (train.length < 50) continue;
     const R = computeRatings(train, { ...CFG, halfLife: 90 }, new Date(day + 'T12:00:00Z'));
+    const R30 = computeRatings(train, { ...CFG, halfLife: 30 }, new Date(day + 'T12:00:00Z'));
     const tr = train.filter(g => g.mins === 40); let LP = 0, LN = 0; tr.forEach(g => g.teams.forEach(t => { LP += poss(t); LN++; })); const lgPace = LP / LN;
     const hist = {}; train.slice().sort((x, y) => x.date < y.date ? -1 : 1).forEach(g => { const p = (poss(g.teams[0]) + poss(g.teams[1])) / 2; g.teams.forEach(t => (hist[t.id] = hist[t.id] || []).push(p)); });
     const prof = (X, Y) => { const Lg = R.lg, k = key => X.f['o_' + key] * Y.f['d_' + key] / Lg[key];
@@ -103,7 +106,9 @@ function modelC(done, upcoming) {
       const tr5 = h => { const q = h.slice(-5).sort((x, y) => x - y); return q.length >= 5 ? mean(q.slice(1, 4)) : mean(h); };
       const pTrim = tr5(hist[a.id]) * tr5(hist[b.id]) / lgPace;
       const v = c3 * (0.8 + 0.2 * pTrim / p0);
-      if (isFinite(v)) pred[g.id] = v;
+      if (isFinite(v)) { pred[g.id] = v; PC[g.id] = { pace: p0 * (0.8 + 0.2 * pTrim / p0) }; }
+      const X = R30.ratings[a.id], Y = R30.ratings[b.id];
+      if (X && Y) { const c1 = X.t * Y.t / R30.lg.tempo * (X.o * Y.d / R30.lg.eff * hf(a) + Y.o * X.d / R30.lg.eff * hf(b)); if (isFinite(c1)) PC1[g.id] = c1; }
     }
   }
   return pred;
@@ -154,6 +159,15 @@ function grade(log, store) {
   }
   const rec = {}; for (const p of Object.values(log.picks)) { if (!p.tier || !['win', 'loss'].includes(p.result)) continue; for (const k of [p.tier, 'all']) { const r = rec[k] = rec[k] || { w: 0, l: 0, units: 0 }; p.result === 'win' ? r.w++ : r.l++; r.units = +(r.units + p.units).toFixed(3); } }
   log.record = rec;
+  // playbook (side by side): its own result per pick, units = tier size × win/loss
+  const prec = {};
+  for (const p of Object.values(log.picks)) {
+    if (!p.pbTier || p.final == null || p.line == null) continue;
+    if (p.pbResult == null) { if (p.final === p.line) p.pbResult = 'push'; else { const win = (p.final > p.line) === (p.pbSide === 'OVER'); p.pbResult = win ? 'win' : 'loss'; p.pbU = +((win ? pay(p.pbSide === 'OVER' ? p.po : p.pu) : -1) * (p.pbUnits || 0)).toFixed(3); } }
+    if (!['win', 'loss'].includes(p.pbResult)) continue;
+    for (const k of [p.pbSkip ? 'Skipped' : p.pbTier, p.pbSkip ? null : 'all'].filter(Boolean)) { const r = prec[k] = prec[k] || { w: 0, l: 0, units: 0 }; p.pbResult === 'win' ? r.w++ : r.l++; r.units = +(r.units + (p.pbU || 0)).toFixed(3); }
+  }
+  log.pbRecord = prec;
 }
 
 // ---------- season bias (bias-corrected version) ----------
@@ -173,6 +187,36 @@ function seasonBias(done) {
   return { F: n ? sF / (n + 50) : 0, C: n ? sC / (n + 50) : 0, games: n, days: days.length };
 }
 
+// ---------- playbook (Nov 28): four versions vs the opener, tiers, C-core filter ----------
+// Each version = raw model minus its rolling lean (avg raw − final over this season's last 800 graded games, min 60):
+// F, C (C3-trimmed), F + C average, hybrid (C's pace × F's points per trip), and Mike's original C core (filter only).
+// Top: hybrid 10+ off the opener and F + C 5+ same side (2 units) · Strong: hybrid 7+ and F + C 5+ (1.5 units) ·
+// Base: all four versions 5+ same side (1 unit) · Skip any of them when C core is under 3 off the opener on that side.
+function playbook(done, up, Cpred) {
+  const raw = g => { const f = PF[g.id], c = PC[g.id], c1 = PC1[g.id], c3 = Cpred[g.id]; if (!f || !c || c1 == null || c3 == null) return null;
+    const v = { F: f.pace * f.ppp, C: c3, H: c.pace * f.ppp, C1: c1 }; return Object.values(v).every(isFinite) ? v : null; };
+  const hist = done.filter(g => g.lines && (g.lines.close != null || g.lines.open != null)).sort((x, y) => x.date < y.date ? -1 : 1)
+    .map(g => ({ v: raw(g), fin: g.teams[0].pts + g.teams[1].pts })).filter(x => x.v).slice(-800);
+  const lean = {}; for (const k of ['F', 'C', 'H', 'C1']) lean[k] = hist.length >= 60 ? hist.reduce((s, x) => s + x.v[k] - x.fin, 0) / hist.length : 0;
+  const out = {};
+  for (const g of up) {
+    const v = raw(g), open = g.lines && g.lines.open != null ? g.lines.open : null; if (!v || open == null) continue;
+    const F = v.F - lean.F, C = v.C - lean.C, H = v.H - lean.H, C1 = v.C1 - lean.C1, FC = (F + C) / 2;
+    const d = { F: F - open, C: C - open, FC: FC - open, H: H - open, C1: C1 - open };
+    const sideOf = x => Math.sign(x), same = (x, s, t) => sideOf(x) === s && Math.abs(x) >= t;
+    let tier = null, s = sideOf(d.H);
+    if (same(d.H, s, 10) && same(d.FC, s, 5)) tier = 'Top';
+    else if (same(d.H, s, 7) && same(d.FC, s, 5)) tier = 'Strong';
+    else { s = sideOf(d.F); if (['F', 'C', 'FC', 'H'].every(k => same(d[k], s, 5))) tier = 'Base'; }
+    const skip = !!tier && !same(d.C1, s, 3);
+    const cur = g.lines.close != null ? g.lines.close : null;
+    out[g.id] = { F: +F.toFixed(1), C: +C.toFixed(1), FC: +FC.toFixed(1), H: +H.toFixed(1), C1: +C1.toFixed(1), gapH: +d.H.toFixed(1), gapFC: +d.FC.toFixed(1),
+      tier, side: tier ? (s > 0 ? 'OVER' : 'UNDER') : null, skip, units: tier && !skip ? { Top: 2, Strong: 1.5, Base: 1 }[tier] : 0,
+      gapNow: tier && cur != null ? +((s > 0 ? 1 : -1) * ((tier === 'Base' ? FC : H) - cur)).toFixed(1) : null };
+  }
+  return { out, lean: Object.fromEntries(Object.entries(lean).map(([k, x]) => [k, +x.toFixed(2)])), games: hist.length };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === '--test') { // offline check against a saved season
@@ -186,14 +230,15 @@ async function main() {
   const done = Object.values(store).filter(g => g.teams && g.teams.every(t => t.pts != null));
   const today = etDay(new Date().toISOString()), tomorrow = etDay(new Date(Date.now() + 864e5).toISOString());
   const up = await upcomingGames([today, tomorrow]);
-  const F = modelF(done, up, 60), C = modelC(done, up), B = seasonBias(done);
-  const games = up.map(g => { const p = pick(g, F[g.id], C[g.id]), corr = p ? { Fc: +(p.F - B.F).toFixed(1), Cc: +(p.C - B.C).toFixed(1), FCc: +(p.FC - (B.F + B.C) / 2).toFixed(1) } : {}; return { id: g.id, date: g.date, day: etDay(g.date), away: g.teams.find(t => !t.home) || g.teams[0], home: g.teams.find(t => t.home) || g.teams[1], neutral: g.neutral, conf: g.confGame, book: g.lines && g.lines.book, ...(p || {}), ...corr }; })
+  const F = modelF(done, up, 60), C = modelC(done, done.concat(up)), PB = playbook(done, up, C), B = seasonBias(done);
+  const games = up.map(g => { const p = pick(g, F[g.id], C[g.id]), corr = p ? { Fc: +(p.F - B.F).toFixed(1), Cc: +(p.C - B.C).toFixed(1), FCc: +(p.FC - (B.F + B.C) / 2).toFixed(1) } : {}; return { id: g.id, pb: PB.out[g.id] || null, date: g.date, day: etDay(g.date), away: g.teams.find(t => !t.home) || g.teams[0], home: g.teams.find(t => t.home) || g.teams[1], neutral: g.neutral, conf: g.confGame, book: g.lines && g.lines.book, ...(p || {}), ...corr }; })
     .sort((x, y) => (x.date < y.date ? -1 : 1));
-  fs.writeFileSync('data/ncaa-picks.json', JSON.stringify({ updated: new Date().toISOString(), bias: { F: +B.F.toFixed(2), C: +B.C.toFixed(2), games: B.games, days: B.days }, rule: 'F and C each 5+ off the opening total, same side (A = both 8+, B = both 5+, C = average 5+ only, track-only)', games }));
+  fs.writeFileSync('data/ncaa-picks.json', JSON.stringify({ updated: new Date().toISOString(), bias: { F: +B.F.toFixed(2), C: +B.C.toFixed(2), games: B.games, days: B.days }, playbookLean: PB.lean, playbookGames: PB.games, rule: 'F and C each 5+ off the opening total, same side (A = both 8+, B = both 5+, C = average 5+ only, track-only)', games }));
   const logFile = 'data/ncaa-picks-log.json', log = fs.existsSync(logFile) ? JSON.parse(fs.readFileSync(logFile, 'utf8')) : { picks: {} };
   for (const g of games) { if (g.F == null) continue; const old = log.picks[g.id]; if (old && old.result) continue;
     // keep the first-seen opener and model numbers (the bet we would have made), refresh current line
-    log.picks[g.id] = old && old.line != null ? { ...old, current: g.current } : { id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, po: g.po, pu: g.pu, Fc: g.Fc, Cc: g.Cc, FCc: g.FCc, logged: new Date().toISOString() }; }
+    const pbLog = g.pb ? { pbTier: g.pb.tier, pbSide: g.pb.side, pbSkip: g.pb.skip, pbUnits: g.pb.units, H: g.pb.H, C1: g.pb.C1, pbFC: g.pb.FC } : {};
+    log.picks[g.id] = old && old.line != null ? { ...(old.pbTier === undefined ? pbLog : {}), ...old, current: g.current } : { ...pbLog, id: g.id, day: g.day, away: g.away.abbr, home: g.home.abbr, F: g.F, C: g.C, FC: g.FC, line: g.line, open: g.open, current: g.current, side: g.side, tier: g.tier, price: g.price, po: g.po, pu: g.pu, Fc: g.Fc, Cc: g.Cc, FCc: g.FCc, logged: new Date().toISOString() }; }
   grade(log, store); log.updated = new Date().toISOString();
   fs.writeFileSync(logFile, JSON.stringify(log));
   console.log('picks: ' + games.length + ' upcoming, ' + games.filter(g => g.tier === 'A' || g.tier === 'B').length + ' rule bets | bias F ' + B.F.toFixed(2) + ' C ' + B.C.toFixed(2) + ' (' + B.games + ' games) | record ' + JSON.stringify(log.record || {}));
